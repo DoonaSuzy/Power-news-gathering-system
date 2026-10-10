@@ -1,0 +1,51 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# ---- 测试与工具缓存 ----
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# ---- 环境与密钥 ----
+.env
+.env.local
+*.local.env
+
+# ---- 运行期产物 ----
+logs/
+*.log
+samples/
+backups/
+*.sql.gz
+*.tar.gz
+
+# ---- IDE / OS ----
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---- 其他 ----
+data/raw/
+
+# ---- 运行期工具与调试产物（不入版本库）----
+.workbuddy/
+.ruff_cache/
+.redis/
+data/_debug/
+
+# ---- 可重生成的汇总产物（由 scripts/export_csv.py 产出，无需入库）----
+data/power_news/_csv/
+data/power_news/_all_articles.csv

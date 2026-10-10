@@ -1,0 +1,23 @@
+# ============================================================
+# Power News Aggregator —— 采集层运行依赖
+# 数据中台（newsplatform）依赖见 newsplatform/requirements.txt
+# 一键安装全部：pip install -r requirements.txt -r newsplatform/requirements.txt
+# ============================================================
+
+# ---- 采集层 ----
+scrapy==2.19.0
+parsel==1.12.1
+redis==8.1.0
+PyMySQL==1.2.3
+python-dotenv==1.2.4
+tzdata==2026.5
+
+# ---- 通用正文抽取 fallback（改造方案 §3.2）----
+gne==0.3.1
+
+# ---- 开发 / 测试依赖 ----
+pytest==9.1.1
+pytest-asyncio==0.25.0
+fakeredis==2.39.0
+freezegun==1.5.1
+ruff==0.8.4

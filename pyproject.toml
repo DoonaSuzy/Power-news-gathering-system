@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "powernews"
+version = "0.1.0"
+description = "电力新闻聚合与数据中台（34 个省级行政区电力新闻采集 + FastAPI 数据中台）"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Power News Aggregator Team" }]
+keywords = ["power", "electricity", "news", "crawler", "scrapy", "fastapi"]
+dependencies = [
+    # ---- 采集层 ----
+    "scrapy==2.19.0",
+    "parsel==1.12.1",
+    "redis==8.1.0",
+    "PyMySQL==1.2.3",
+    "python-dotenv==1.2.4",
+    "tzdata==2026.5",
+    # ---- 正文抽取 fallback ----
+    "gne==0.3.1",
+    # ---- 数据中台（newsplatform）----
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.34.0",
+    "sqlalchemy[asyncio]==2.0.36",
+    "aiomysql==0.2.0",
+    "pydantic==2.10.4",
+    "pydantic-settings==2.7.0",
+    "structlog==24.4.0",
+    "httpx==0.28.1",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+    "pytest-asyncio==0.25.0",
+    "fakeredis==2.39.0",
+    "freezegun==1.5.1",
+    "ruff==0.8.4",
+]
+migrate = ["alembic==1.14.0"]
+
+[project.scripts]
+powernews = "newsagg.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/DoonaSuzy/News-Aggregator-"
+
+[tool.setuptools]
+packages = { find = { include = ["newsagg*"] } }
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "newsplatform/tests"]
+addopts = "-q"
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B"]
+ignore = ["E501"]
