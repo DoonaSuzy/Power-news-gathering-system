@@ -48,14 +48,17 @@ class PlatformSettings(BaseSettings):
     docs_enabled: bool = True
 
     # ---------------- 数据库 ----------------
+    # Security: 源码中不内置真实口令。默认值里的 CHANGE_ME 是占位符，
+    # 请通过环境变量 POWERNEWS_PLATFORM_DATABASE_URL / _COLLECTOR_DATABASE_URL
+    # （或 .env，见 .env.example）注入真实连接串。
     #: 中台自有库（可写）：api_keys / audit_logs / stats_snapshots
     database_url: str = (
-        "mysql+aiomysql://powernews:powernews_dev_pw@127.0.0.1:3306"
+        "mysql+aiomysql://powernews:CHANGE_ME@127.0.0.1:3306"
         "/powernews_platform?charset=utf8mb4"
     )
     #: 采集库（只读语义）：articles / sources / provinces / crawl_jobs
     collector_database_url: str = (
-        "mysql+aiomysql://powernews:powernews_dev_pw@127.0.0.1:3306"
+        "mysql+aiomysql://powernews:CHANGE_ME@127.0.0.1:3306"
         "/powernews?charset=utf8mb4"
     )
     db_echo: bool = False

@@ -49,3 +49,7 @@ data/_debug/
 # ---- 可重生成的汇总产物（由 scripts/export_csv.py 产出，无需入库）----
 data/power_news/_csv/
 data/power_news/_all_articles.csv
+
+# ---- 导出的一次性打包产物（git bundle）----
+_dist/
+*.bundle

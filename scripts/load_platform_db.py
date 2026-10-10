@@ -70,8 +70,26 @@ TIME_RE = re.compile(r"(\d{1,2}):(\d{2})(?::(\d{2}))?")
 
 # ---------------------------------------------------------------------------
 def connect():
-    """连接中台库（优先 .env 里的 powernews 账号，失败回退 root）。"""
-    for user, password in (("powernews", "powernews_dev_pw"), ("root", "")):
+    """连接中台库。
+
+    Security:
+        凭据**只从环境变量读取**，源码中不内置任何真实口令。默认按
+        ``PLATFORM_DB_USER`` / ``PLATFORM_DB_PASSWORD``；若需备用账号，用
+        ``PLATFORM_DB_FALLBACK_USER`` / ``PLATFORM_DB_FALLBACK_PASSWORD`` 指定
+        （同样只走环境变量）。
+
+    示例::
+
+        export PLATFORM_DB_USER=powernews
+        export PLATFORM_DB_PASSWORD='你的口令'
+        python scripts/load_platform_db.py
+    """
+    candidates = [(DB["user"], DB["password"])]
+    fallback_user = os.environ.get("PLATFORM_DB_FALLBACK_USER")
+    if fallback_user:
+        candidates.append((fallback_user, os.environ.get("PLATFORM_DB_FALLBACK_PASSWORD", "")))
+
+    for user, password in candidates:
         try:
             conn = pymysql.connect(
                 host=DB["host"], port=DB["port"], user=user, password=password,
