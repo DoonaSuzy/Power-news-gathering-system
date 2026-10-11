@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from newsplatform.api.v1 import admin, articles, health, provinces, sources, stats
+from newsplatform.api.v1 import admin, articles, health, market, provinces, sources, stats, weather
 
 __all__ = ["api_router", "ROUTERS"]
 
 #: 供文档与测试遍历
-ROUTERS = (health, articles, provinces, sources, stats, admin)
+ROUTERS = (health, articles, provinces, sources, stats, weather, market, admin)
 
 api_router = APIRouter()
 for _module in ROUTERS:
