@@ -141,6 +141,40 @@ services:
     # 水平扩展采集能力：docker compose up -d --scale worker=3
     # （scale 时须去掉 container_name，并用 supervisor 而非裸 worker）
 
+  # ---- 气象历史回填：默认不启动，--profile backfill 才拉起 ----
+  # 「回填优先」排期：hist_rt 2024 全年（87,129 折算调用）+ hist_fc 2026 至今
+  # （67,767）≈ 154,896，按 --per-day 9000 约 17 天跑完。区间与上限都用
+  # ``--dry-run`` 在 VM 上实测过，不是估的。
+  backfill:
+    build: *app-build
+    image: *app-image
+    container_name: power-backfill
+    profiles: ["backfill"]
+    restart: unless-stopped
+    # 日额度约 08:00（北京时间）重置。打到 --per-day 上限后客户端最多累计等待
+    # 10,800s，等不到就 fail fast 退出——所以这里不指望一个进程活满 17 天，
+    # 靠 restart 策略 + wx_ingest_progress 续跑（--resume 是默认行为）。
+    # 用 && 而不是 ; ：上一个产品没跑完就不进下一个，避免两个进程抢同一份额度。
+    command:
+      - sh
+      - -c
+      - >-
+        python -m newsagg weather backfill --product hist_rt
+        --since 2024-01-01 --until 2024-12-31 --per-day 9000
+        &&
+        python -m newsagg weather backfill --product hist_fc
+        --since 2026-01-01 --per-day 9000
+    env_file:
+      - .env
+    environment:
+      <<: *app-env
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [power-net]
+
   # ---- 监控栈：默认不启动，--profile ops 才拉起（内存紧张）----
   prometheus:
     image: prom/prometheus:latest
