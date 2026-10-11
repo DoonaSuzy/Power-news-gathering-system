@@ -272,9 +272,11 @@ def vectorized_transform(
 ) -> VectorizedResult:
     """标准化 →（可选）清洗 → 补缺 → 重采样 → 单位归一，一键向量化管线。
 
-    与逐行循环的写法相比，10 万条数据的处理走的是 pandas/NumPy 的 C 级批量
-    运算；返回的 :class:`VectorizedResult` 里 ``row_loops`` 恒为 0，
-    ``vectorized_ops`` 记录实际用到的算子，测试可直接断言而无需依赖耗时。
+    10 万条数据走的是 pandas/NumPy 的 C 级批量运算。返回的
+    :class:`VectorizedResult` 里 ``vectorized_ops`` 记录实际用到的算子、
+    ``row_loops`` 恒为 0——它们声明的是**这条路径的实现契约**（有没有逐行
+    Python 循环），不是性能指标；真实耗时请用 ``scripts/bench_vectorized.py``
+    测，别拿常量当证据。
     """
     resolved_granularity = resolve_granularity(granularity)
     ops: list[str] = []

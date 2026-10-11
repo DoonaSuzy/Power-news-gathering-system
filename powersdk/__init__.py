@@ -42,7 +42,7 @@
 
 from __future__ import annotations
 
-from .client import PowerDataClient
+from .client import PowerDataClient, default_source
 from .config import (
     DEFAULT_ENV,
     ENV_PROFILES,
@@ -106,12 +106,14 @@ from .timeseries import (
     CANONICAL_COLUMNS,
     CATEGORY_BINDINGS,
     CATEGORY_REGISTRY,
+    DAILY_RANGE_OVERRIDES,
     DAILY_UNIT_OVERRIDES,
     DEFAULT_REGIONS,
     GRANULARITIES,
     GRANULARITY_ALIASES,
     GRANULARITY_FREQ,
     PROVINCE_AGGREGATION,
+    WEATHER_COLUMN_RANGE,
     WEATHER_COLUMN_UNIT,
     WEATHER_PARAM_TO_COLUMN,
     WEATHER_PARAMS,
@@ -132,6 +134,7 @@ from .timeseries import (
     resolve_granularity,
     unbacked_categories,
     weather_column,
+    weather_range,
     weather_unit,
 )
 from .utils import (
@@ -147,6 +150,7 @@ from .utils import (
 )
 from .validation import (
     DEFAULT_THRESHOLD,
+    UNIT_ALIASES,
     Alert,
     AlertSink,
     CollectingAlertSink,
@@ -155,6 +159,7 @@ from .validation import (
     ValidationSpec,
     Violation,
     alerts_from_report,
+    canonical_unit,
     spec_for_category,
     validate,
     validate_and_alert,
@@ -166,6 +171,7 @@ __all__ = [
     "__version__",
     # 门面
     "PowerDataClient",
+    "default_source",
     # 配置
     "Settings", "EnvProfile", "ENV_PROFILES", "ENVIRONMENTS", "DEFAULT_ENV", "ENV_VAR",
     "get_settings", "reset_settings", "settings_for_env", "current_env", "normalize_env",
@@ -180,6 +186,7 @@ __all__ = [
     "CATEGORY_BINDINGS", "SourceBinding", "backed_categories", "unbacked_categories",
     "WEATHER_PRODUCTS", "WEATHER_PARAM_TO_COLUMN", "WEATHER_COLUMN_UNIT",
     "DAILY_UNIT_OVERRIDES", "weather_unit",
+    "WEATHER_COLUMN_RANGE", "DAILY_RANGE_OVERRIDES", "weather_range",
     "PROVINCE_AGGREGATION", "province_projection", "weather_column",
     # 插值
     "INTERP_METHODS", "METHOD_CATALOG", "METHOD_ALIASES", "NATIVE_METHODS", "SCIPY_METHODS",
@@ -191,6 +198,7 @@ __all__ = [
     # 校验 / 告警
     "ValidationSpec", "Violation", "ValidationReport", "validate", "validate_and_alert",
     "spec_for_category", "alerts_from_report", "DEFAULT_THRESHOLD",
+    "UNIT_ALIASES", "canonical_unit",
     "Alert", "AlertSink", "CollectingAlertSink", "LoguruAlertSink",
     # 工具
     "resample", "fill_gaps", "pivot_region", "clean_outliers", "standardize_units",

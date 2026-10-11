@@ -8,11 +8,20 @@
     df = client.query("load", region="广东", start="2025-01-01",
                       end="2025-01-02", granularity="hourly")
 
+接真实数据仍然是 3 行，只是先把中台地址配进环境（代码一行都不用改）：::
+
+    export POWERSDK_API_BASE_URL=http://192.168.101.84:8080/api/v1
+    export POWERSDK_API_TOKEN=pk_xxxxxxxx
+
+    df = PowerDataClient().query("weather", region="广东", start="2024-01-10",
+                                 end="2024-01-11")
+
 ``query`` 内部管线（全部向量化、各环节可注入替换）：
 
 1. 类别解析（中文别名 / 枚举 / 规范名）；
 2. 地区解析（pypinyin 拼音 / 缩写 / 行政区划码）；
-3. 通过 :class:`~powersdk.timeseries.TimeSeriesSource` 取数（内存源 / MySQL 源）；
+3. 通过 :class:`~powersdk.timeseries.TimeSeriesSource` 取数（中台 HTTP / MySQL /
+   内存，见 :func:`default_source`）；
 4. JSON 解析 + 时间戳补全 + 排序去重；
 5. 稳健离群清洗（可选）、时间轴补缺（按插值方法表）；
 6. 多粒度重采样 + 单位归一；
@@ -21,6 +30,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Sequence
 from typing import Any
@@ -30,16 +40,19 @@ from loguru import logger
 
 from .config import Settings, get_settings
 from .errors import PowerSDKError
+from .http_source import HttpTimeSeriesSource
 from .interpolation import resolve_method
 from .parsing import parse_json_records, standardize_records
 from .timeseries import (
     CANONICAL_COLUMNS,
     Category,
     InMemoryTimeSeriesSource,
+    MySQLTimeSeriesSource,
     TimeSeriesSource,
     backed_categories,
     categories,
     category_spec,
+    granularity_freq,
     resolve_category,
     resolve_granularity,
 )
@@ -55,10 +68,28 @@ from .validation import (
 __all__ = ["PowerDataClient"]
 
 
+def default_source(settings: Settings | None = None) -> TimeSeriesSource:
+    """按「这台机器实际配了什么」挑数据源：中台 HTTP > MySQL 直连 > 内存演示。
+
+    判据只看**环境变量**，不看 :class:`Settings` 字段——dev/test/prod 三套环境画像
+    里 ``api_base_url`` 永远非空（本地 127.0.0.1、生产 power-data.internal），
+    拿它当判据会让每一次 ``PowerDataClient()`` 都去打一个不存在的端口，
+    离线用例与「开箱即演示」两头都毁掉。业务同学配好中台地址（或库口令）
+    就等于表态「我要真数据」，一行构造代码都不用改。
+    """
+    environ = os.environ
+    if environ.get("POWERSDK_API_BASE_URL"):
+        return HttpTimeSeriesSource(settings=settings or get_settings())
+    if environ.get("POWERSDK_MYSQL_PASSWORD"):
+        return MySQLTimeSeriesSource(settings=settings or get_settings())
+    return InMemoryTimeSeriesSource()
+
+
 class PowerDataClient:
     """电力数据中台统一接口客户端。
 
-    :param source: 数据源，默认 :class:`InMemoryTimeSeriesSource`（离线可用）
+    :param source: 数据源；不传则按环境变量自动选（见 :func:`default_source`），
+        既没配中台也没配库时回落到内存演示源
     :param env: 环境名（dev/test/prod），优先级高于 ``POWERSDK_ENV``
     :param alert_sink: 告警出口，默认收集到内存（``client.alerts`` 可读）
     :param fill: 是否补齐时间轴缺口（默认 True，按插值方法表）
@@ -79,7 +110,7 @@ class PowerDataClient:
         logger_: Any | None = None,
     ) -> None:
         self.settings = settings or (Settings.for_env(env) if env else get_settings())
-        self.source: TimeSeriesSource = source or InMemoryTimeSeriesSource()
+        self.source: TimeSeriesSource = source or default_source(self.settings)
         self.alert_sink: AlertSink = alert_sink or CollectingAlertSink()
         self.fill = fill
         self.clean = clean
@@ -135,7 +166,11 @@ class PowerDataClient:
             df = df.head(int(limit)).reset_index(drop=True)
 
         if use_validate:
-            v_spec = spec_for_category(cat, param, expected_freq=None if gran == "raw" else "h")
+            # 校验区间按「逐时口径」派生：这里取的是逐时行、本地重采样成均值，输出
+            # 仍是小时量纲（库里存的逐日行是日累计，量纲不同，见 weather_range）。
+            # expected_freq 则跟着输出粒度走，否则拿 1 小时网格去卡日行，缺口率会
+            # 虚报成接近 100%，刷出一屏没有信息量的告警。
+            v_spec = spec_for_category(cat, param, expected_freq=granularity_freq(gran))
             self.last_report = validate_and_alert(
                 df, v_spec, self.alert_sink, threshold=self.settings.accuracy_threshold
             )

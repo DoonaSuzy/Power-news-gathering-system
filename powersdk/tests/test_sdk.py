@@ -59,6 +59,7 @@ from powersdk import (
     region_code,
     region_pinyin,
     resolve_method,
+    spec_for_category,
     standardize_units,
     to_pinyin_abbr,
     to_records,
@@ -67,6 +68,7 @@ from powersdk import (
     validate_and_alert,
     vectorized_transform,
     weather_column,
+    weather_range,
     weather_unit,
 )
 from powersdk.config import ENV_PROFILES, get_settings, reset_settings
@@ -422,6 +424,19 @@ def test_validation_detects_violations_and_emits_alerts():
     validate_and_alert(frame, spec, LoguruAlertSink(), threshold=0.998)
 
 
+def test_validation_detects_timestamp_regression_in_arrival_order():
+    """时间倒退按**到达顺序**判：先排序再比 diff，这条规则永远跑不到（曾经的实现）。"""
+    frame = _wx_long([1.0, 2.0, 3.0], unit="MW")
+    frame.loc[2, "ts"] = frame.loc[0, "ts"] - pd.Timedelta(hours=1)  # 末行倒回两小时
+    spec = ValidationSpec(value_min=0.0, value_max=100.0, unit="MW", name="probe")
+
+    report = validate(frame, spec)
+    assert "non_monotonic" in report.codes
+    assert report.accuracy < 1.0
+    # 同一份数据按时间排好序再校验，就不该报倒退
+    assert validate(frame.sort_values("ts").reset_index(drop=True), spec).codes == ()
+
+
 def test_client_alerts_when_source_is_dirty():
     """端到端：脏数据源 → 客户端查询后能读到告警与掉分的准确率。"""
 
@@ -461,6 +476,72 @@ def test_client_fills_missing_values_and_raises_alerts():
     df2 = filled.query("load", region="广东", start="2025-01-01", end="2025-01-02", granularity="hourly")
     assert df2["value"].notna().all()
     assert filled.last_accuracy() >= 0.998
+
+
+# ------------------------------------------------- 校验区间以真实库口径为准
+def _wx_long(values: list[float], *, unit: str, region: str = "广东") -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "ts": pd.date_range("2024-01-10", periods=len(values), freq="h"),
+            "region": [region] * len(values),
+            "value": values,
+            "unit": [unit] * len(values),
+        }
+    )
+
+
+def test_weather_validation_bounds_follow_the_real_schema():
+    """校验区间以库为准：风速是 km/h、实测到过 72.1，不是画像早期的 m/s/40。
+
+    极值取自 192.168.101.84 ``power_news`` 里 1,583,025 行 ``wx_*`` 的实测分布。
+    """
+    wind = spec_for_category("weather", "wind_speed_10m")
+    assert (wind.unit, wind.value_min, wind.value_max) == ("km/h", 0.0, 200.0)
+    # 画像与库同纲，否则离线演示源产出的每一行都会报 unit_mismatch
+    assert WEATHER_PARAMS["wind_speed_10m"].unit == weather_unit("wind_speed_10m")
+    report = validate(_wx_long([72.1, 19.1, 0.0], unit="km/h"), wind)
+    assert report.accuracy == 1.0, report.as_dict()
+
+    code = spec_for_category("weather", "weather_code")
+    assert (code.unit, code.value_max) == ("WMO", 99.0)
+    assert validate(_wx_long([96.0, 0.0], unit="WMO"), code).accuracy == 1.0
+
+    # 区间放宽不等于放过脏数据：超上界照样扣分
+    assert validate(_wx_long([72.1, 1200.0], unit="km/h"), wind).accuracy == 0.5
+
+
+def test_weather_spec_names_the_real_column_and_accepts_both_aliases():
+    """cloudcover（SDK 参数名）与 cloud_cover（真实列名）派生出同一条规则。"""
+    by_param = spec_for_category("weather", "cloudcover")
+    assert by_param == spec_for_category("weather", "cloud_cover")
+    assert by_param.name == "weather:cloud_cover"
+    assert by_param.unit == "%"
+
+
+def test_daily_basis_switches_both_unit_and_range():
+    """库里存的逐日辐照是日累计 MJ/m²（实测极值 24.83），不是小时均值 W/m²。"""
+    hourly = spec_for_category("weather", "shortwave_radiation")
+    daily = spec_for_category("weather", "shortwave_radiation", granularity="daily")
+    assert (hourly.unit, hourly.value_max) == ("W/m²", 1200.0)
+    assert (daily.unit, daily.value_max) == ("MJ/m²", 60.0)
+    assert validate(_wx_long([24.83], unit="MJ/m²"), daily).accuracy == 1.0
+    assert weather_range("shortwave_radiation", "daily") == (0.0, 60.0)
+
+
+def test_unit_mismatch_folds_spelling_variants():
+    """库里「元/兆瓦时」与画像「元/MWh」同量纲：折叠写法，不逐行报单位告警。"""
+    spec = ValidationSpec(value_min=0.0, value_max=2000.0, unit="元/MWh", name="power_spot")
+    assert validate(_wx_long([149.0, 701.0], unit="元/兆瓦时"), spec).codes == ()
+    assert validate(_wx_long([149.0], unit="元/加仑"), spec).codes == ("unit_mismatch",)
+
+
+def test_spec_for_category_refuses_to_borrow_temperature_bounds():
+    """库里没有这列、画像里也没有 → 明确报错，不再悄悄用气温区间顶上去。"""
+    with pytest.raises(UnavailableParamError):
+        spec_for_category("weather", "totally_made_up")
+    # 画像里有、库里还没采的参数（离线演示源能造）继续给规则，保证离线可用
+    visual = spec_for_category("weather", "visibility")
+    assert (visual.unit, visual.value_max) == ("m", 50000.0)
 
 
 # ------------------------------------------------------------- 地区拼音索引
@@ -558,6 +639,37 @@ def test_client_env_selection(source):
     assert health["status"] == "ok"
     assert health["env"] == "prod"
     assert "mysql_password" not in health["settings"]
+
+
+def test_default_source_follows_configured_endpoint(monkeypatch):
+    """三行代码取真数据的前提：配了中台地址就别再给合成曲线。
+
+    判据必须是**环境变量**而不是 Settings 字段——三套环境画像里
+    ``api_base_url`` 永远非空，按字段判会让每次 ``PowerDataClient()``
+    都去打一个本机没起的 8000 端口，离线用例和「开箱即演示」一起废掉。
+    """
+    for var in ("POWERSDK_API_BASE_URL", "POWERSDK_MYSQL_PASSWORD"):
+        monkeypatch.delenv(var, raising=False)
+    assert isinstance(PowerDataClient().source, InMemoryTimeSeriesSource)
+
+    monkeypatch.setenv("POWERSDK_API_BASE_URL", "http://midgate.test/api/v1")
+    monkeypatch.setenv("POWERSDK_API_TOKEN", "pk_test")
+    reset_settings()
+    http_client = PowerDataClient()
+    assert isinstance(http_client.source, HttpTimeSeriesSource)
+    assert http_client.source.base_url == "http://midgate.test/api/v1"
+    assert http_client.source.token == "pk_test"
+
+    # 只配库口令 = 直连库（没有中台可用时的兜底路径）
+    monkeypatch.delenv("POWERSDK_API_BASE_URL")
+    monkeypatch.setenv("POWERSDK_MYSQL_PASSWORD", "s3cret")
+    reset_settings()
+    assert isinstance(PowerDataClient().source, MySQLTimeSeriesSource)
+
+    # 显式传 source 永远压过环境推断
+    mem = InMemoryTimeSeriesSource(seed=SEED, hours=3)
+    monkeypatch.setenv("POWERSDK_API_BASE_URL", "http://midgate.test/api/v1")
+    assert PowerDataClient(source=mem).source is mem
 
 
 # --------------------------------------------------- 10 万条向量化处理

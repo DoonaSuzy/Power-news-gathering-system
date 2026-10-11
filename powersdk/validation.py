@@ -19,13 +19,17 @@ from typing import Any, Protocol, runtime_checkable
 import pandas as pd
 from loguru import logger
 
+from .errors import UnavailableParamError
 from .timeseries import (
     CATEGORY_REGISTRY,
+    WEATHER_PARAM_TO_COLUMN,
     WEATHER_PARAMS,
     Category,
     CategorySpec,
     WeatherParamSpec,
     resolve_category,
+    weather_range,
+    weather_unit,
 )
 
 __all__ = [
@@ -36,6 +40,8 @@ __all__ = [
     "AlertSink",
     "CollectingAlertSink",
     "LoguruAlertSink",
+    "UNIT_ALIASES",
+    "canonical_unit",
     "validate",
     "validate_and_alert",
     "alerts_from_report",
@@ -149,8 +155,27 @@ def _samples(values: Iterable[Any], limit: int = 5) -> tuple[Any, ...]:
     return tuple(out)
 
 
+#: 同一量纲的不同写法（库里存「元/兆瓦时」，类别画像写「元/MWh」）。
+#: 只用于 ``unit_mismatch`` 这一条 warning 的比较——不换算、不改数据。
+#: 不折叠的后果是行情类**每一行**都报「单位不符」，一屏假告警会把真问题淹掉。
+UNIT_ALIASES: dict[str, str] = {
+    "元/兆瓦时": "元/MWh",
+    "元/千瓦时": "元/kWh",
+    "兆瓦时": "MWh",
+    "兆瓦": "MW",
+    "亿千瓦时": "亿kWh",
+    "万千瓦": "万kW",
+}
+
+
+def canonical_unit(unit: object) -> str:
+    """单位的规范写法（未登记的写法原样返回）。"""
+    text = str(unit).strip()
+    return UNIT_ALIASES.get(text, text)
+
+
 def validate(frame: Any, spec: ValidationSpec) -> ValidationReport:
-    """对标准长表做校验，返回 :class:`ValidationReport`。
+    """按 :class:`ValidationSpec` 的口径校验一帧时序，产出 :class:`ValidationReport`。
 
     所有检查均为向量化布尔运算；准确率按「行」去重统计（一行同时触发多个问题
     只扣一次），因此 :attr:`ValidationReport.accuracy` 与业务口径一致。
@@ -227,10 +252,9 @@ def validate(frame: Any, spec: ValidationSpec) -> ValidationReport:
                           f"重复率 {duplicate_count / total:.4f} 超过上限 {spec.max_duplicate_ratio}", ())
             )
 
-        # 5) 时间倒退（按地区分组判断单调性）
+        # 5) 时间倒退：按**到达顺序**判，同地区内后一行不得早于前一行。
         if spec.check_monotonic and total > 1:
-            ordered = df.sort_values(["region", "ts"], kind="stable")
-            regress = ordered.groupby("region", sort=False)["ts"].diff() < pd.Timedelta(0)
+            regress = df.groupby("region", sort=False)["ts"].diff() < pd.Timedelta(0)
             regress = regress.fillna(False)
             if bool(regress.any()):
                 count = int(regress.sum())
@@ -241,7 +265,8 @@ def validate(frame: Any, spec: ValidationSpec) -> ValidationReport:
 
     # 6) 单位一致性（warning，不扣准确率）
     if spec.unit and "unit" in df.columns:
-        mismatch = df["unit"].astype("string").str.strip().ne(spec.unit).fillna(False)
+        actual = df["unit"].astype("string").str.strip().map(canonical_unit)
+        mismatch = actual.ne(canonical_unit(spec.unit)).fillna(False)
         if bool(mismatch.any()):
             count = int(mismatch.sum())
             violations.append(
@@ -396,22 +421,47 @@ def spec_for_category(
     *,
     expected_freq: str | None = None,
     allow_null: bool = False,
+    granularity: str = "hourly",
 ) -> ValidationSpec:
-    """按类别（或气象参数）画像自动派生校验规则。"""
+    """按类别（或气象要素）派生校验规则。
+
+    气象走**真实库口径**（:data:`~powersdk.timeseries.WEATHER_COLUMN_RANGE` /
+    :data:`~powersdk.timeseries.WEATHER_COLUMN_UNIT`），不走 ``WEATHER_PARAMS``
+    那份合成数据画像：画像曾经把风速写成 ``m/s``、上界 40，而库里的风速是 ``km/h``、
+    实测到过 72.1——拿画像校验真数据，一场大风就是一次「越界」，量出来的准确率只反映
+    画像和现实的差距。只有在库里没有这一列、但合成源能造时（离线演示/单测）才退回画像。
+    两边都没有就抛 :class:`~powersdk.errors.UnavailableParamError`，不再像早先那样
+    悄悄拿气温的区间顶上去。
+
+    :param granularity: 行的**量纲口径**。``daily`` 只对库里存好的聚合行成立
+        （辐照变 ``MJ/m²``、降水是日累计）；``PowerDataClient.query`` 目前是取逐时
+        行后本地重采样，输出仍是小时口径，所以那边不传 ``daily``。
+    """
     resolved = resolve_category(category)
     if resolved == Category.WEATHER:
-        name = param or "temperature_2m"
-        profile: CategorySpec | WeatherParamSpec = WEATHER_PARAMS.get(
-            name, WEATHER_PARAMS["temperature_2m"]
-        )
-        return ValidationSpec(
-            value_min=profile.minimum,
-            value_max=profile.maximum,
-            unit=profile.unit,
-            allow_null=allow_null,
-            expected_freq=expected_freq,
-            name=f"weather:{name}",
-        )
+        name = str(param or "temperature_2m").strip().lower()
+        column = WEATHER_PARAM_TO_COLUMN.get(name)
+        if column is not None:
+            value_min, value_max = weather_range(column, granularity)
+            return ValidationSpec(
+                value_min=value_min,
+                value_max=value_max,
+                unit=weather_unit(column, granularity),
+                allow_null=allow_null,
+                expected_freq=expected_freq,
+                name=f"weather:{column}",
+            )
+        if name in WEATHER_PARAMS:
+            profile: CategorySpec | WeatherParamSpec = WEATHER_PARAMS[name]
+            return ValidationSpec(
+                value_min=profile.minimum,
+                value_max=profile.maximum,
+                unit=profile.unit,
+                allow_null=allow_null,
+                expected_freq=expected_freq,
+                name=f"weather:{name}",
+            )
+        raise UnavailableParamError(param, sorted(set(WEATHER_PARAM_TO_COLUMN.values())))
     spec = CATEGORY_REGISTRY[resolved.value]
     return ValidationSpec(
         value_min=spec.minimum,

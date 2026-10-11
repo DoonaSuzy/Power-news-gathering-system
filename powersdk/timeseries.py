@@ -62,6 +62,8 @@ __all__ = [
     "WEATHER_PARAM_TO_COLUMN",
     "WEATHER_COLUMN_UNIT",
     "DAILY_UNIT_OVERRIDES",
+    "WEATHER_COLUMN_RANGE",
+    "DAILY_RANGE_OVERRIDES",
     "PROVINCE_AGGREGATION",
     "MARKET_REGION_ALIASES",
     "MARKET_REGION_LABELS",
@@ -72,6 +74,7 @@ __all__ = [
     "unbacked_categories",
     "weather_column",
     "weather_unit",
+    "weather_range",
     "province_projection",
     "categories",
     "category_spec",
@@ -243,7 +246,7 @@ CATEGORY_REGISTRY: dict[str, CategorySpec] = {
     )
 }
 
-#: 18 个气象参数画像
+#: 18 个气象参数画像（单位与 Open-Meteo / 库一致：风速是 km/h，不是 m/s）
 WEATHER_PARAMS: dict[str, WeatherParamSpec] = {
     spec.name: spec
     for spec in (
@@ -254,8 +257,8 @@ WEATHER_PARAMS: dict[str, WeatherParamSpec] = {
         WeatherParamSpec("precipitation", "mm", 0.8, 0.50, 0.0, 200.0, "sparse", "降水量"),
         WeatherParamSpec("rain", "mm", 0.7, 0.50, 0.0, 200.0, "sparse", "降雨量"),
         WeatherParamSpec("snowfall", "cm", 0.05, 0.60, 0.0, 100.0, "sparse", "降雪量"),
-        WeatherParamSpec("wind_speed_10m", "m/s", 3.6, 0.30, 0.0, 40.0, "wind", "10m 风速"),
-        WeatherParamSpec("wind_gusts_10m", "m/s", 6.5, 0.28, 0.0, 50.0, "wind", "10m 阵风"),
+        WeatherParamSpec("wind_speed_10m", "km/h", 13.0, 0.30, 0.0, 200.0, "wind", "10m 风速"),
+        WeatherParamSpec("wind_gusts_10m", "km/h", 23.4, 0.28, 0.0, 250.0, "wind", "10m 阵风"),
         WeatherParamSpec("wind_direction_10m", "°", 180.0, 0.35, 0.0, 360.0, "wrap", "10m 风向"),
         WeatherParamSpec("pressure_msl", "hPa", 1013.0, 0.004, 950.0, 1050.0, "static", "海平面气压"),
         WeatherParamSpec("surface_pressure", "hPa", 1005.0, 0.005, 940.0, 1045.0, "static", "地面气压"),
@@ -311,8 +314,9 @@ WEATHER_PARAM_TO_COLUMN: dict[str, str] = {
     "weather_code": "weather_code",
 }
 
-#: 真实列名 → 单位。**以库为准**：Open-Meteo 的风速是 km/h，不是 m/s，
-#: SDK 的 ``WEATHER_PARAMS`` 画像里写的是 m/s（那是合成数据用的形状，不是库口径）。
+#: 真实列名 → 单位。**以库为准**：Open-Meteo 的风速是 km/h，不是 m/s；
+#: ``WEATHER_PARAMS`` 的画像单位必须与这里一致，否则离线演示源产出的每一行都会
+#: 被校验判成「单位不符」。
 WEATHER_COLUMN_UNIT: dict[str, str] = {
     "temperature_2m": "°C",
     "relative_humidity_2m": "%",
@@ -340,6 +344,41 @@ def weather_unit(column: str, granularity: str = "hourly") -> str:
     if str(granularity) == "daily":
         return DAILY_UNIT_OVERRIDES.get(column, WEATHER_COLUMN_UNIT[column])
     return WEATHER_COLUMN_UNIT[column]
+
+#: 真实列 → 合法取值区间（逐时口径），**与 :data:`WEATHER_COLUMN_UNIT` 成对维护**。
+#:
+#: 校验拿这份、不拿 ``WEATHER_PARAMS`` 的画像：画像那份是合成发生器用的形状参数，
+#: 一份曾经写「风速 m/s、上界 40」的画像套在风速单位是 km/h 的库上，一场 72 km/h
+#: 的大风就是一次「越界」——量出来的「准确率」只是画像和现实的差距，不是数据质量。
+#: 上界取「物理上可能、但脏数据够不着」的位置，边界参照 1,583,025 行真实数据的
+#: 实测分布（见 docs/简历对标效果对比.md）。
+WEATHER_COLUMN_RANGE: dict[str, tuple[float | None, float | None]] = {
+    "temperature_2m": (-40.0, 60.0),
+    "relative_humidity_2m": (0.0, 100.0),
+    "precipitation": (0.0, 200.0),
+    "wind_speed_10m": (0.0, 200.0),
+    "wind_direction_10m": (0.0, 360.0),
+    "shortwave_radiation": (0.0, 1200.0),
+    "cloud_cover": (0.0, 100.0),
+    "pressure_msl": (950.0, 1050.0),
+    "et0_fao_evapotranspiration": (0.0, 20.0),
+    "weather_code": (0.0, 99.0),
+}
+
+#: 逐日行的区间改档：只有「聚合方式是求和」的列会变量纲。
+#: 均值列（气温/湿度/云量/气压）与 MAX 列（风速、天气代码）沿用逐时上界。
+DAILY_RANGE_OVERRIDES: dict[str, tuple[float | None, float | None]] = {
+    "precipitation": (0.0, 500.0),
+    "et0_fao_evapotranspiration": (0.0, 20.0),
+    "shortwave_radiation": (0.0, 60.0),
+}
+
+
+def weather_range(column: str, granularity: str = "hourly") -> tuple[float | None, float | None]:
+    """列名 → 合法区间（``daily`` 时套用 :data:`DAILY_RANGE_OVERRIDES`）。"""
+    if str(granularity) == "daily":
+        return DAILY_RANGE_OVERRIDES.get(column, WEATHER_COLUMN_RANGE[column])
+    return WEATHER_COLUMN_RANGE[column]
 
 #: 省级汇总口径（把同省多个气象站压成一条省序列）。
 #:
