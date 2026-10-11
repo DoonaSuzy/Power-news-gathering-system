@@ -1,0 +1,14 @@
+# Grafana 数据源 provisioning：默认 Prometheus 数据源。
+# 容器内 Grafana 会读取 /etc/grafana/provisioning/datasources/ 下的本文件。
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    # docker-compose 网络中 prometheus 服务地址。
+    url: http://prometheus:9090
+    isDefault: true
+    editable: true
+    jsonData:
+      timeInterval: 15s

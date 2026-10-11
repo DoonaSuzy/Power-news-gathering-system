@@ -30,6 +30,7 @@ dependencies = [
     "pydantic-settings==2.7.0",
     "structlog==24.4.0",
     "httpx==0.28.1",
+    "prometheus-client==0.26.0",
 ]
 
 [project.optional-dependencies]
@@ -41,6 +42,13 @@ dev = [
     "ruff==0.17.0",
 ]
 migrate = ["alembic==1.14.0"]
+# 统一接口 SDK（powersdk）的运行时依赖；SDK 自身可分发见 powersdk/pyproject.toml
+sdk = [
+    "pandas==3.0.6",
+    "numpy==2.5.3",
+    "pypinyin==0.55.0",
+    "loguru==0.7.3",
+]
 
 [project.scripts]
 powernews = "newsagg.cli:main"
@@ -52,7 +60,7 @@ Homepage = "https://github.com/DoonaSuzy/News-Aggregator-"
 packages = { find = { include = ["newsagg*"] } }
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "newsplatform/tests"]
+testpaths = ["tests", "newsplatform/tests", "newsagg/finance/tests", "powersdk/tests"]
 addopts = "-q"
 asyncio_mode = "auto"
 filterwarnings = ["ignore::DeprecationWarning"]

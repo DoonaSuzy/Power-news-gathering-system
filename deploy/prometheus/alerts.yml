@@ -1,0 +1,54 @@
+# 告警规则：电力新闻聚合平台核心异常（对应「实现异常实时告警」交付物）。
+# 每条规则带 for 持续时间，避免瞬时抖动误报；最长 5m，满足 ≤5min 告警要求。
+groups:
+  - name: power-news-alerts
+    rules:
+      # 采集 / API 目标掉线：up==0 持续 2 分钟。
+      - alert: PowerSpiderDown
+        expr: up{job="power-fastapi"} == 0
+        for: 2m
+        labels:
+          severity: critical
+          team: crawl
+        annotations:
+          summary: "采集/API 目标不可用 ({{ $labels.instance }})"
+          description: "power-fastapi 已掉线超过 2 分钟，请检查容器与依赖（MySQL/Redis）。"
+
+      # 5xx 错误率过高：5 分钟内 5xx 占比 > 5%，持续 5 分钟。
+      - alert: HighErrorRate
+        expr: |
+          sum(rate(power_http_requests_total{status=~"5.."}[5m]))
+          / clamp_min(sum(rate(power_http_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels:
+          severity: critical
+          team: api
+        annotations:
+          summary: "API 5xx 错误率过高"
+          description: "近 5 分钟 5xx 占比超过 5%，当前值 {{ $value | humanizePercentage }}。"
+
+      # 队列积压：待处理队列深度 > 1000 且持续 5 分钟。
+      - alert: QueueBacklog
+        expr: power_queue_depth > 1000
+        for: 5m
+        labels:
+          severity: warning
+          team: worker
+        annotations:
+          summary: "采集队列积压"
+          description: "待处理队列深度 {{ $value }} 超过 1000，worker 消费能力不足。"
+
+      # 高延迟：p95 请求耗时 > 0.2s（对应 API 平均响应 ≤ 200ms SLO），持续 5 分钟。
+      - alert: HighLatency
+        expr: |
+          histogram_quantile(
+            0.95,
+            sum(rate(power_http_request_duration_seconds_bucket[5m])) by (le)
+          ) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+          team: api
+        annotations:
+          summary: "API p95 延迟超过 200ms"
+          description: "近 5 分钟 p95 延迟 {{ $value }}s，已超过 0.2s SLO 阈值。"

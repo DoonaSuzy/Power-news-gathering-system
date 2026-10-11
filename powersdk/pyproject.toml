@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "power-data-sdk"
+version = "0.1.0"
+description = "电力数据中台统一接口 SDK：11 类时序数据查询 / 多时间粒度 / JSON 解析与时间戳补全 / 向量化处理 / 数据校验告警"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "power-data-sdk maintainers" }]
+keywords = ["power", "energy", "timeseries", "pandas", "sdk", "load-forecast"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+]
+dependencies = [
+    "pandas>=2.0",
+    "numpy>=1.24",
+    "PyMySQL>=1.0",
+    "pypinyin>=0.48",
+    "loguru>=0.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.urls]
+Homepage = "https://example.invalid/power-data-sdk"
+Documentation = "https://example.invalid/power-data-sdk/docs"
+
+[tool.setuptools]
+packages = ["powersdk"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

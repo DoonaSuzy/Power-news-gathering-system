@@ -43,6 +43,7 @@ from newsplatform.core.config import PlatformSettings, get_platform_settings
 from newsplatform.core.database import dispose_database, get_database
 from newsplatform.core.exception_handlers import register_exception_handlers
 from newsplatform.core.logging import get_logger
+from newsplatform.core.metrics import instrument_app
 from newsplatform.core.middleware import RequestContextMiddleware
 
 __all__ = ["app", "create_app", "lifespan"]
@@ -169,6 +170,10 @@ def create_app(settings: PlatformSettings | None = None) -> FastAPI:
 
     # 4) 业务路由
     app.include_router(api_router, prefix=cfg.api_prefix)
+
+    # 5) Prometheus 监控：ASGI 中间件 + ``GET /metrics``（幂等）。
+    #    放在最后挂载，因此它在中间件栈最外层，耗时统计覆盖完整请求链路。
+    instrument_app(app)
 
     @app.get("/", include_in_schema=False)
     async def index() -> dict:

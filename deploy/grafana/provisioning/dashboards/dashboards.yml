@@ -1,0 +1,15 @@
+# Grafana 仪表盘 provisioning：从文件目录加载看板。
+# dashboards/power-news.json 会被挂载到 /var/lib/grafana/dashboards 并自动加载。
+apiVersion: 1
+
+providers:
+  - name: power-news-dashboards
+    orgId: 1
+    folder: Power News
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

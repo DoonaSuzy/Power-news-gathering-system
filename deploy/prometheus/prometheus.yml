@@ -1,0 +1,32 @@
+# Prometheus 抓取配置：电力新闻聚合平台（对应简历「项目二」监控体系）。
+# 由 deploy 编排启动：prometheus 容器挂载本文件与 alerts.yml。
+global:
+  # 全局抓取间隔 15s：兼顾实时性与抓取开销。
+  scrape_interval: 15s
+  # 规则评估间隔与抓取间隔一致，保证告警判定节奏统一。
+  evaluation_interval: 15s
+  external_labels:
+    monitor: power-news
+    env: production
+
+# 告警规则文件（PowerSpiderDown / HighErrorRate / QueueBacklog / HighLatency）。
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+scrape_configs:
+  # FastAPI 数据中台：业务请求计数 / 延迟 / 采集等核心指标。
+  - job_name: power-fastapi
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["fastapi:8000"]
+        labels:
+          service: fastapi
+
+  # 采集 worker：需在 worker 进程内通过 prometheus_client.start_http_server(8000)
+  # 暴露 /metrics（见部署说明）。此处按服务名抓取同一端口。
+  - job_name: power-worker
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["worker:8000"]
+        labels:
+          service: worker
