@@ -22,8 +22,9 @@
 
 from __future__ import annotations
 
+import math
 import time
-from collections import deque
+from collections import defaultdict, deque
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -33,11 +34,11 @@ import httpx
 
 from newsagg.logutil import get_logger
 from newsagg.weather.models import (
-    DAILY_DERIVED,
-    DAILY_FROM_API,
+    DAILY_AGGREGATION,
     ENDPOINTS,
     HOURLY_VARS,
     PRODUCT_SOURCE,
+    RADIATION_HOUR_TO_MJ,
     VALUE_COLUMNS,
     WeatherPoint,
     chunk_periods,
@@ -50,7 +51,8 @@ __all__ = [
     "FetchStats",
     "build_params",
     "parse_payload",
-    "daily_mean_by_date",
+    "aggregate_daily",
+    "dominant_wind_direction",
     "classify_rate_limit",
     "error_reason",
     "WeatherClient",
@@ -327,8 +329,10 @@ def build_params(
     params: dict[str, str] = {
         "latitude": ",".join(_coord(s.lat) for s in stations),
         "longitude": ",".join(_coord(s.lon) for s in stations),
+        # 只请求逐时：变量数 10 → 计费倍数 1.0。请求 daily 会让变量数变 17、
+        # 倍数 1.7，每日增量 14,662 权重直接超出免费档 10,000/日。
+        # 逐日行改由 :func:`aggregate_daily` 本地算，口径见 models.DAILY_AGGREGATION。
         "hourly": ",".join(v[0] for v in HOURLY_VARS),
-        "daily": ",".join(DAILY_FROM_API.keys()),
         "timezone": "Asia/Shanghai",
         "wind_speed_unit": "kmh",
         "precipitation_unit": "mm",
@@ -363,19 +367,79 @@ def _to_datetime(text: str) -> datetime:
     return datetime.fromisoformat(text.replace("Z", ""))
 
 
-def daily_mean_by_date(times: Iterable[str], values: Iterable[Any]) -> dict[date, float]:
-    """按日期对逐时序列取均值，**跳过缺测**（``None`` 不参与、也不当 0 算）。
+def dominant_wind_direction(pairs: Iterable[tuple[float, float]]) -> float | None:
+    """风速加权的圆均值（度），``pairs`` 为 ``(风向°, 风速)``。
 
-    把 ``None`` 当 0 会让日均值系统性偏低——湿度缺 3 小时就会拉低好几个点。
-    若某天全部缺测，该日期不出现在结果里（下游写 NULL，而不是写 0）。
+    风向是角度量，算术平均会在 0°/360° 交界处算反——库内实测出现过
+    「接口 243°、简单均值 96°」。按风速加权的单位向量平均才能复现接口的
+    ``wind_direction_10m_dominant``（5,866 个 station-day 里 99.97% 落在 ±5°）。
+    静风（权重和为 0）返回 ``None``，让下游写 NULL 而不是写一个假方向。
     """
-    buckets: dict[date, list[float]] = {}
-    for t, v in zip(times, values, strict=False):
-        if v is None:
-            continue
-        day = _to_datetime(t).date()
-        buckets.setdefault(day, []).append(float(v))
-    return {d: sum(vals) / len(vals) for d, vals in buckets.items() if vals}
+    x = y = 0.0
+    for direction, speed in pairs:
+        rad = math.radians(direction)
+        x += speed * math.cos(rad)
+        y += speed * math.sin(rad)
+    if x == 0.0 and y == 0.0:
+        return None
+    degrees = math.degrees(math.atan2(y, x)) % 360.0
+    # 北向风在浮点下会得到 -1e-15°，取模后正好等于 360.0；写进 SMALLINT UNSIGNED
+    # 列会与接口的 0° 相差 360，所以把值域归一到 [0, 360)。
+    return 0.0 if degrees >= 360.0 else degrees
+
+
+def aggregate_daily(
+    times: Sequence[str],
+    series_by_col: dict[str, Sequence[Any]],
+) -> dict[date, dict[str, float]]:
+    """由同一次响应的逐时序列本地算逐日值：``日期 → 列名 → 值``。
+
+    缺测（``None``）跳过、**不当 0 算**：湿度缺 3 小时若按 0 计入，日均值会被
+    系统性拉低好几个点。某天所有列都缺则该天不出现在结果里（下游写 NULL，
+    而不是交出一行全 0 的假数据）。聚合口径见
+    :data:`newsagg.weather.models.DAILY_AGGREGATION`。
+    """
+    buckets: dict[date, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    wind: dict[date, list[tuple[float, float]]] = defaultdict(list)
+    directions = series_by_col.get("wind_direction_10m") or []
+    speeds = series_by_col.get("wind_speed_10m") or []
+
+    for idx, text in enumerate(times):
+        day = _to_datetime(text).date()
+        for col, series in series_by_col.items():
+            value = series[idx] if idx < len(series) else None
+            if value is not None:
+                buckets[day][col].append(float(value))
+        if idx < len(directions) and idx < len(speeds):
+            d, s = directions[idx], speeds[idx]
+            if d is not None and s is not None:
+                wind[day].append((float(d), float(s)))
+
+    out: dict[date, dict[str, float]] = {}
+    for day, cols in buckets.items():
+        row: dict[str, float] = {}
+        for col, how in DAILY_AGGREGATION.items():
+            if how == "dominant":
+                value = dominant_wind_direction(wind[day])
+            else:
+                vals = cols.get(col)
+                if not vals:
+                    continue
+                if how == "mean":
+                    value = sum(vals) / len(vals)
+                elif how == "sum":
+                    value = sum(vals)
+                elif how == "radiation_sum":
+                    value = sum(vals) * RADIATION_HOUR_TO_MJ
+                elif how == "max":
+                    value = max(vals)
+                else:
+                    raise ValueError(f"未知的逐日聚合口径 {how!r}（列 {col}）")
+            if value is not None:
+                row[col] = value
+        if row:
+            out[day] = row
+    return out
 
 
 def _empty_values() -> dict[str, float | None]:
@@ -433,26 +497,10 @@ def parse_payload(
                 source=source,
             ))
 
-        daily = item.get("daily") or {}
-        daily_times: list[str] = list(daily.get("time") or [])
-        if not daily_times:
-            continue
-
-        derived: dict[str, dict[date, float]] = {
-            col: daily_mean_by_date(times, hourly.get(col) or [])
-            for col in DAILY_DERIVED
-        }
-
-        for idx, day_str in enumerate(daily_times):
-            day = date.fromisoformat(day_str)
+        series_by_col = {col: (hourly.get(col) or []) for col in VALUE_COLUMNS}
+        for day, daily_values in sorted(aggregate_daily(times, series_by_col).items()):
             values = _empty_values()
-            for api_param, col in DAILY_FROM_API.items():
-                series = daily.get(api_param)
-                if series is not None and idx < len(series) and series[idx] is not None:
-                    values[col] = float(series[idx])
-            for col, table in derived.items():
-                if day in table:
-                    values[col] = table[day]
+            values.update(daily_values)
             points.append(WeatherPoint(
                 station_id=station.station_id,
                 adcode=station.adcode,
@@ -632,7 +680,7 @@ class WeatherClient:
                 weight = estimate_call_cost(
                     locations=len(batch),
                     days=(p_end - p_start).days + 1,
-                    variables=len(HOURLY_VARS) + len(DAILY_FROM_API),
+                    variables=len(HOURLY_VARS),
                 )
                 stats.requests += 1
                 stats.cost += weight

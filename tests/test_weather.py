@@ -16,9 +16,10 @@ from newsagg.weather import models as wm
 from newsagg.weather.client import (
     RateLimiter,
     Station,
+    aggregate_daily,
     build_params,
     classify_rate_limit,
-    daily_mean_by_date,
+    dominant_wind_direction,
     error_reason,
     parse_payload,
     resolve_window,
@@ -170,7 +171,25 @@ def test_build_params_sends_all_ten_hourly_variables():
     hourly = params["hourly"].split(",")
     assert len(hourly) == 10
     assert hourly == [v[0] for v in wm.HOURLY_VARS]
-    assert len(params["daily"].split(",")) == len(wm.DAILY_FROM_API) == 7
+
+
+def test_build_params_does_not_request_daily_variables():
+    """逐日行改由本地聚合，请求里不能出现 ``daily``。
+
+    多带 7 个日聚合参数会把计费倍数从 1.0 抬到 1.7（vars/10 向上取整），
+    这是 P0-1 要解决的配额问题，所以用一条测试把它钉住。
+    """
+    params = build_params(
+        product="hist_rt", stations=STATIONS_2,
+        start=date(2024, 1, 1), end=date(2024, 1, 14),
+    )
+    assert "daily" not in params
+    assert wm.estimate_call_cost(
+        locations=1, days=14, variables=len(wm.HOURLY_VARS),
+    ) == 1.0
+    assert wm.estimate_call_cost(
+        locations=1, days=14, variables=len(wm.HOURLY_VARS) + 7,
+    ) == 1.7
 
 
 def test_build_params_joins_multiple_locations():
@@ -231,33 +250,104 @@ def test_build_params_rejects_unknown_product():
 
 
 # ======================================================================
-# 4. 日聚合
+# 4. 日聚合（本地计算）
 # ======================================================================
 
 
-def test_daily_mean_skips_missing_hours():
+def test_aggregate_daily_mean_skips_missing_hours():
     """缺测不能当 0 算——否则日均会被系统性拉低。"""
     times = ["2024-01-01T00:00", "2024-01-01T01:00", "2024-01-01T02:00"]
-    assert daily_mean_by_date(times, [10.0, None, 20.0]) == {date(2024, 1, 1): 15.0}
+    out = aggregate_daily(times, {"temperature_2m": [10.0, None, 20.0]})
+    assert out[date(2024, 1, 1)]["temperature_2m"] == 15.0
 
 
-def test_daily_mean_omits_fully_missing_day():
+def test_aggregate_daily_omits_fully_missing_day():
     """整天缺测的日期不出现在结果里，下游写 NULL 而不是 0。"""
     times = ["2024-01-01T00:00", "2024-01-02T00:00"]
-    assert daily_mean_by_date(times, [None, None]) == {}
+    assert aggregate_daily(times, {"temperature_2m": [None, None]}) == {}
 
 
-def test_daily_mean_buckets_by_date():
+def test_aggregate_daily_buckets_by_date():
     times = ["2024-01-01T23:00", "2024-01-02T00:00"]
-    out = daily_mean_by_date(times, [4.0, 8.0])
-    assert out == {date(2024, 1, 1): 4.0, date(2024, 1, 2): 8.0}
+    out = aggregate_daily(times, {"temperature_2m": [4.0, 8.0]})
+    assert out[date(2024, 1, 1)]["temperature_2m"] == 4.0
+    assert out[date(2024, 1, 2)]["temperature_2m"] == 8.0
 
 
-def test_daily_mean_tolerates_length_mismatch():
+def test_aggregate_daily_tolerates_length_mismatch():
     """序列比时间轴短时按较短者处理，不抛异常（接口偶发丢尾）。"""
-    assert daily_mean_by_date(["2024-01-01T00:00", "2024-01-01T01:00"], [6.0]) == {
-        date(2024, 1, 1): 6.0
+    out = aggregate_daily(
+        ["2024-01-01T00:00", "2024-01-01T01:00"], {"temperature_2m": [6.0]},
+    )
+    assert out[date(2024, 1, 1)]["temperature_2m"] == 6.0
+
+
+def test_aggregate_daily_applies_each_columns_own_kind():
+    """五种口径各测一次：mean/sum/max/radiation_sum 与逐列对应关系不能串。"""
+    times = ["2024-01-01T00:00", "2024-01-01T01:00"]
+    out = aggregate_daily(
+        times,
+        {
+            "precipitation": [1.0, 2.5],
+            "wind_speed_10m": [4.0, 11.0],
+            "shortwave_radiation": [100.0, 200.0],
+            "weather_code": [3.0, 61.0],
+        },
+    )
+    day = out[date(2024, 1, 1)]
+    assert day["precipitation"] == 3.5                     # sum
+    assert day["wind_speed_10m"] == 11.0                   # max
+    assert day["weather_code"] == 61.0                     # max：日最严重，不是众数
+    assert day["shortwave_radiation"] == pytest.approx(300.0 * wm.RADIATION_HOUR_TO_MJ)
+
+
+def test_aggregate_daily_radiation_unit_is_mj_per_m2():
+    """W/m² 是瞬时量，日累计必须折算成 MJ/m²，否则数值会大两个数量级。"""
+    times = [f"2024-01-01T{h:02d}:00" for h in range(24)]
+    out = aggregate_daily(times, {"shortwave_radiation": [100.0] * 24})
+    assert out[date(2024, 1, 1)]["shortwave_radiation"] == pytest.approx(8.64)
+
+
+def test_aggregate_daily_only_returns_requested_columns():
+    times = ["2024-01-01T00:00", "2024-01-01T01:00"]
+    out = aggregate_daily(times, {"temperature_2m": [1.0, 3.0], "cloud_cover": [0.0, 100.0]})
+    assert set(out[date(2024, 1, 1)]) == {"temperature_2m", "cloud_cover"}
+
+
+def test_aggregate_daily_covers_every_declared_kind():
+    """models 里新增口径必须先在这里被实现，否则运行时才抛 ValueError。"""
+    assert set(wm.DAILY_AGGREGATION.values()) == {
+        "mean", "sum", "max", "dominant", "radiation_sum",
     }
+    assert set(wm.DAILY_AGGREGATION) == set(wm.VALUE_COLUMNS)
+
+
+def test_dominant_wind_direction_is_speed_weighted():
+    """风向是角度量：0°/360° 交界处简单平均会算反，必须按风速加权取圆均值。"""
+    assert dominant_wind_direction([(350.0, 10.0), (10.0, 10.0)]) == 0.0
+    # 大风主导：小风时段几乎不影响结果
+    assert dominant_wind_direction([(90.0, 1.0), (270.0, 20.0)]) == pytest.approx(270.0)
+
+
+def test_dominant_wind_direction_returns_none_when_calm():
+    assert dominant_wind_direction([(123.0, 0.0), (45.0, 0.0)]) is None
+    assert dominant_wind_direction([]) is None
+
+
+def test_aggregate_daily_wind_direction_uses_paired_speeds():
+    """风向与风速必须按下标配对；没有风速权重就不产出这一列。"""
+    times = ["2024-01-01T00:00", "2024-01-01T01:00"]
+    out = aggregate_daily(
+        times,
+        {"wind_direction_10m": [90.0, 270.0], "wind_speed_10m": [2.0, 18.0]},
+    )
+    assert out[date(2024, 1, 1)]["wind_direction_10m"] == pytest.approx(270.0)
+    # 只有风向、没有风速 → 无法加权，宁可缺列也不造一个假方向
+    partial = aggregate_daily(
+        times, {"wind_direction_10m": [90.0, 270.0], "temperature_2m": [1.0, 2.0]},
+    )
+    assert "wind_direction_10m" not in partial[date(2024, 1, 1)]
+    assert partial[date(2024, 1, 1)]["temperature_2m"] == 1.5
 
 
 # ======================================================================
@@ -266,30 +356,21 @@ def test_daily_mean_tolerates_length_mismatch():
 
 
 def _payload(station_count: int = 1, hours: int = 2, days: int = 1) -> list[dict]:
+    """构造只含 ``hourly`` 的响应体——逐日行现在由本地聚合得出。"""
     out = []
     for _ in range(station_count):
         times = [f"2024-01-0{i + 1}T{h:02d}:00" for i in range(days) for h in range(hours)]
         hourly = {"time": times}
         for col, _, _ in wm.HOURLY_VARS:
-            if col in wm.DAILY_DERIVED:
-                hourly[col] = [50.0 + i for i in range(len(times))]
+            if col in {"relative_humidity_2m", "cloud_cover", "pressure_msl"}:
+                hourly[col] = [50.0 + j for j in range(len(times))]
             elif col == "wind_direction_10m":
                 hourly[col] = [180] * len(times)
             elif col == "weather_code":
                 hourly[col] = [3] * len(times)
             else:
                 hourly[col] = [1.5] * len(times)
-        daily = {
-            "time": [f"2024-01-0{i + 1}" for i in range(days)],
-            "temperature_2m_mean": [2.5] * days,
-            "precipitation_sum": [0.0] * days,
-            "wind_speed_10m_max": [7.0] * days,
-            "wind_direction_10m_dominant": [90] * days,
-            "shortwave_radiation_sum": [11.0] * days,
-            "et0_fao_evapotranspiration": [0.3] * days,
-            "weather_code": [61] * days,
-        }
-        out.append({"hourly": hourly, "daily": daily})
+        out.append({"hourly": hourly})
     return out
 
 
@@ -304,18 +385,20 @@ def test_parse_payload_produces_hourly_and_daily_rows():
     assert daily[0].ts == datetime(2024, 1, 1, 0, 0)
 
 
-def test_parse_payload_fills_daily_from_api_columns():
-    points = parse_payload(_payload(hours=2, days=1), [STATIONS_2[0]], product="hist_rt")
+def test_parse_payload_aggregates_daily_from_hourly_values():
+    """逐日行完全由同一次响应的逐时序列算出，不依赖接口的 daily 字段。"""
+    points = parse_payload(_payload(hours=4, days=1), [STATIONS_2[0]], product="hist_rt")
     day = next(p for p in points if p.granularity == "daily")
-    assert day.values["temperature_2m"] == 2.5   # 日平均
-    assert day.values["precipitation"] == 0.0    # 日累计
-    assert day.values["wind_speed_10m"] == 7.0   # 日最大
-    assert day.values["shortwave_radiation"] == 11.0
-    assert day.values["weather_code"] == 61.0
+    assert day.values["temperature_2m"] == 1.5      # mean
+    assert day.values["precipitation"] == 6.0       # sum：4 × 1.5
+    assert day.values["wind_speed_10m"] == 1.5      # max
+    assert day.values["weather_code"] == 3.0        # max
+    assert day.values["wind_direction_10m"] == 180.0
+    assert day.values["shortwave_radiation"] == pytest.approx(6.0 * 0.0036)
 
 
 def test_parse_payload_derives_humidity_cloud_pressure_locally():
-    """这三个变量接口没有日聚合，必须由逐时值本地取均值。"""
+    """这三列接口本就没有日聚合，现在统一按逐时均值。"""
     points = parse_payload(_payload(hours=2, days=1), [STATIONS_2[0]], product="hist_rt")
     day = next(p for p in points if p.granularity == "daily")
     # 逐时值为 50.0、51.0 → 均值 50.5
@@ -324,15 +407,31 @@ def test_parse_payload_derives_humidity_cloud_pressure_locally():
     assert day.values["pressure_msl"] == pytest.approx(50.5)
 
 
-def test_parse_payload_daily_derived_is_none_when_hourly_missing():
-    """逐时全缺时，派生列必须是 None 而不是 0。"""
+def test_parse_payload_ignores_daily_section_in_response():
+    """响应里若仍带 daily 字段也不得采用——否则两种口径会随机混写进同一张表。"""
     payload = _payload(hours=2, days=1)
-    for col in wm.DAILY_DERIVED:
+    payload[0]["daily"] = {
+        "time": ["2024-01-01"],
+        "temperature_2m_mean": [-99.0],
+        "weather_code": [61],
+    }
+    points = parse_payload(payload, [STATIONS_2[0]], product="hist_rt")
+    day = next(p for p in points if p.granularity == "daily")
+    assert day.values["temperature_2m"] == 1.5
+    assert day.values["weather_code"] == 3.0
+
+
+def test_parse_payload_daily_columns_are_none_when_hourly_missing():
+    """逐时全缺时，该列必须是 None 而不是 0。"""
+    payload = _payload(hours=2, days=1)
+    missing = ["relative_humidity_2m", "cloud_cover", "pressure_msl"]
+    for col in missing:
         payload[0]["hourly"][col] = [None, None]
     points = parse_payload(payload, [STATIONS_2[0]], product="hist_rt")
     day = next(p for p in points if p.granularity == "daily")
-    for col in wm.DAILY_DERIVED:
+    for col in missing:
         assert day.values[col] is None
+    assert day.values["temperature_2m"] == 1.5  # 其余列照常聚合，不受影响
 
 
 def test_parse_payload_keeps_none_for_missing_hourly_value():

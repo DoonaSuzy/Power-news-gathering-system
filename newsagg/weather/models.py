@@ -11,8 +11,7 @@
 ====================  ==========================================  ==================
 
 **为什么「历史实时」不叫「历史观测」**：ERA5 是再分析产品（模式 + 同化观测），
-不是台站原始观测；叫「实况」会让人误以为等价于地面站读数。口径差异见
-``docs/气象数据采集说明.md``。
+不是台站原始观测；叫「实况」会让人误以为等价于地面站读数。
 
 表命名
 ------
@@ -27,8 +26,9 @@
 - 逐日行的 ``ts`` 是当日零点（``2026-01-01 00:00``）。
 
 两类行的 10 个数值列同名，但**口径不同**——逐日行的聚合方式见
-:data:`DAILY_FROM_API` 与 :data:`DAILY_DERIVED`。这是刻意的：列名一致让
+:data:`DAILY_AGGREGATION`。这是刻意的：列名一致让
 「同站点同时刻跨粒度对比」不必改 SQL，而口径由本模块显式声明而不是靠猜。
+逐日行**不再向接口请求 ``daily``**，全部由同一次响应的逐时值本地算出。
 """
 
 from __future__ import annotations
@@ -46,8 +46,7 @@ __all__ = [
     "HOURLY_VARS",
     "VALUE_COLUMNS",
     "VARIABLE_CN",
-    "DAILY_FROM_API",
-    "DAILY_DERIVED",
+    "DAILY_AGGREGATION",
     "DAILY_AGG_LABEL",
     "GRANULARITIES",
     "table_name",
@@ -133,40 +132,55 @@ VARIABLE_CN: dict[str, str] = {v[0]: v[2] for v in HOURLY_VARS}
 #: 列名 → 单位。
 VARIABLE_UNIT: dict[str, str] = {v[0]: v[1] for v in HOURLY_VARS}
 
-#: 逐日行里**由接口日聚合直接给出**的列：``接口 daily 参数 → 目标列``。
-DAILY_FROM_API: dict[str, str] = {
-    "temperature_2m_mean": "temperature_2m",
-    "precipitation_sum": "precipitation",
-    "wind_speed_10m_max": "wind_speed_10m",
-    "wind_direction_10m_dominant": "wind_direction_10m",
-    "shortwave_radiation_sum": "shortwave_radiation",
-    "et0_fao_evapotranspiration": "et0_fao_evapotranspiration",
-    "weather_code": "weather_code",
-}
+#: 1 小时的 W/m² 折算成 MJ/m² 的系数：``1 W × 3600 s / 1e6 = 0.0036``。
+#: 注意别用 0.0864——那是「日均 W/m² 折日总量」的口径（24 小时平均）。
+RADIATION_HOUR_TO_MJ = 0.0036
 
-#: 逐日行里**接口没有对应日聚合、改由逐时值本地取均值**的列。
+#: 逐日行的本地聚合口径：目标列 → 聚合方式（由
+#: :func:`newsagg.weather.client.aggregate_daily` 实现）。
 #:
-#: 这三个变量在 Open-Meteo 的 ``daily`` 参数里确实不存在（不是漏写）。
-#: 之所以要自己算而不是留 NULL：相对湿度与云量对光伏/负荷预测都是有效特征，
-#: 静默留空会让下游拿到「有列但永远没数」的假列。
-DAILY_DERIVED: tuple[str, ...] = (
-    "relative_humidity_2m",
-    "cloud_cover",
-    "pressure_msl",
-)
+#: **为什么不再请求接口的 ``daily``**：加上 7 个日聚合参数后单次请求变量数变成
+#: 17，按「变量数 / 10」计费即 1.7 倍，每日增量（3 产品 × 2875 站）要 14,662
+#: 权重，超出免费档 10,000/日；只请求 10 个逐时变量则回到 1.0 倍、8,625 权重。
+#:
+#: **为什么本地算不吃亏**（华北 ``hist_rt`` 2024-01-01~14 全量对账，
+#: 5,866 个 station-day 实测）：
+#:
+#: - ``mean`` / ``sum`` / ``max``：与接口数学等价，残差只来自逐时列先存成
+#:   DECIMAL 再聚合的舍入 —— ET₀ 平均差 0.014 mm（最大 0.060）、
+#:   日均温平均差 0.028 ℃（最大 0.083）；
+#: - ``dominant``：风速加权的圆均值，99.97% 落在 ±5° 内。**必须是风速加权**，
+#:   简单圆均值会算反（实测出现过接口 243° vs 简单均值 96°）；
+#: - ``radiation_sum``：``Σ逐时 W/m² × 0.0036``，与接口逐日值逐位吻合；
+#: - ``max``：既用于``wind_speed_10m``（日最大风速），也用于
+#:   ``weather_code``（当日最大值，与接口 100% 一致）。接口的日天气代码口径是
+#:   「当日最严重天气」而非「最常见天气」——用众数只有 41% 对得上
+#:   （例：21 小时为 0、接口给 2）。
+DAILY_AGGREGATION: dict[str, str] = {
+    "temperature_2m": "mean",
+    "relative_humidity_2m": "mean",
+    "precipitation": "sum",
+    "wind_speed_10m": "max",
+    "wind_direction_10m": "dominant",
+    "shortwave_radiation": "radiation_sum",
+    "cloud_cover": "mean",
+    "pressure_msl": "mean",
+    "et0_fao_evapotranspiration": "sum",
+    "weather_code": "max",
+}
 
 #: 逐日行各列的口径说明，写进 DDL 注释并由 ``docs`` 引用。
 DAILY_AGG_LABEL: dict[str, str] = {
     "temperature_2m": "日平均",
-    "relative_humidity_2m": "逐时均值（本地聚合）",
+    "relative_humidity_2m": "日平均",
     "precipitation": "日累计",
     "wind_speed_10m": "日最大",
-    "wind_direction_10m": "主导风向",
-    "shortwave_radiation": "日累计",
-    "cloud_cover": "逐时均值（本地聚合）",
-    "pressure_msl": "逐时均值（本地聚合）",
+    "wind_direction_10m": "主导风向（风速加权圆均值）",
+    "shortwave_radiation": "日累计（MJ/m²）",
+    "cloud_cover": "日平均",
+    "pressure_msl": "日平均",
     "et0_fao_evapotranspiration": "日累计",
-    "weather_code": "日主导天气代码",
+    "weather_code": "日最严重（逐时最大值）",
 }
 
 #: 允许的粒度值，与建表时的 ``ENUM`` 必须逐字一致。

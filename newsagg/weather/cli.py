@@ -27,7 +27,6 @@ from newsagg.db import Database
 from newsagg.logutil import get_logger
 from newsagg.weather.client import RateLimiter, Station, WeatherClient
 from newsagg.weather.models import (
-    DAILY_FROM_API,
     ENDPOINTS,
     HOURLY_VARS,
     PRODUCTS,
@@ -220,8 +219,9 @@ def _print_dry_run(
     print("模式：dry-run（不取数、不落库）\n")
     total_requests = 0
     total_cost = 0.0
-    #: 单请求实际携带的变量数 = 逐时变量 + 日聚合参数（后者会让计费倍数上升）
-    variables = len(HOURLY_VARS) + len(DAILY_FROM_API)
+    #: 单请求携带的变量数。逐日聚合已改本地计算，不再请求 ``daily``，
+    #: 因此变量数就是 10、计费倍数保持 1.0（请求 17 个会翻到 1.7）。
+    variables = len(HOURLY_VARS)
     per_product: dict[str, list[int | float]] = {}
     today = date.today()
     for product, region, p_start, p_end in units:
