@@ -155,11 +155,11 @@ def _adapter_overrides(session: CrawlSession) -> dict:
     return overrides
 
 
-def runner(**overrides):
+def runner(overrides: dict | None = None):
     """返回配置好的 ``CrawlerRunner``（供测试或自定义编排使用）。"""
     from scrapy.crawler import CrawlerRunner
 
-    return CrawlerRunner(scrapy_settings(**overrides))
+    return CrawlerRunner(scrapy_settings(overrides=overrides))
 
 
 def run_blocking(
@@ -179,7 +179,10 @@ def run_blocking(
     list_url = _list_url(session)
     bind_context(job_id=job_id, adapter=session.adapter_name)
 
-    process = CrawlerProcess(scrapy_settings(**_adapter_overrides(session)))
+    # 覆盖项必须整包传给 overrides=，不能 **摊平：早先写成 scrapy_settings(**...)，
+    # 于是声明了 tls_ciphers / robots_policy 的来源在建进程时就 TypeError 秒退，
+    # 而其余 40 多个无覆盖的来源正常——极易被误判成「那几个站被封了」。
+    process = CrawlerProcess(scrapy_settings(overrides=_adapter_overrides(session)))
 
     session.start_renewal()
     try:
