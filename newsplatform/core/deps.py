@@ -15,11 +15,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import time as dt_time
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from newsagg.sources_seed import CATEGORY_LABELS
+from newsagg.timefilter import RANGE_KEYS, RANGE_LABELS, resolve_range
 from newsplatform.core.config import PlatformSettings, get_platform_settings
 from newsplatform.core.database import (
     get_collector_session,
@@ -44,6 +46,7 @@ __all__ = [
     "resolve_province_codes",
     "resolve_province_code",
     "CATEGORY_CHOICES",
+    "TimeRange",
 ]
 
 SettingsDep = Annotated[PlatformSettings, Depends(get_platform_settings)]
@@ -52,8 +55,24 @@ CollectorSessionDep = Annotated[AsyncSession, Depends(get_collector_session)]
 #: 采集库**写**会话：仅用于 ``sources`` 配置列。用错会话会让写入被静默回滚。
 CollectorWriteSessionDep = Annotated[AsyncSession, Depends(get_collector_write_session)]
 
-#: 来源类别（与 newsagg/sources_seed.py 的 CATEGORY_LABELS 保持一致）
-CATEGORY_CHOICES = ("sgcc", "csg", "independent", "hmt", "industry")
+#: 来源类别。**直接取自种子清单的标签表**，不再抄一份字面量。
+#: 早先这里写死 ``("sgcc", "csg", "independent", "hmt", "industry")``，而
+#: ``sources_seed`` 后来补了 ``gov``（政府能源主管部门），于是库里 20+ 篇
+#: ``category=gov`` 的文章在 ``/articles?category=gov`` 上直接 400——
+#: 一份合法取值抄了两处，加类别时必然漂移。
+CATEGORY_CHOICES = tuple(CATEGORY_LABELS)
+
+#: 时间快捷档的取值集合。必须与 ``newsagg.timefilter.RANGE_KEYS`` 一致
+#: （``test_timefilter_presets.py`` 把两者钉在一起，改一处就会红）。
+TimeRange = Literal["today", "week", "month", "custom"]
+
+#: Swagger 下拉框说明（档位标签取自 timefilter，文案只有一处）
+_TIME_RANGE_DESC = (
+    "时间范围快捷档："
+    + "、".join(f"{key} = {RANGE_LABELS[key]}" for key in RANGE_KEYS if key != "custom")
+    + f"；{RANGE_LABELS['custom']} = 用 since/until 自己给边界。"
+    + "按**北京时间自然日**且含当天；与 since/until 互斥。"
+)
 
 
 # ======================================================================
@@ -164,8 +183,14 @@ async def get_article_query(
         ),
     ] = None,
     source_id: Annotated[int | None, Query(ge=1, description="来源 id")] = None,
-    since: Annotated[str | None, Query(description="起始时间（北京时间）")] = None,
-    until: Annotated[str | None, Query(description="结束时间（北京时间，只给日期则含当天）")] = None,
+    range_key: Annotated[
+        TimeRange | None,
+        Query(alias="range", description=_TIME_RANGE_DESC, examples=["week"]),
+    ] = None,
+    since: Annotated[str | None, Query(description="自定义起始时间（北京时间）")] = None,
+    until: Annotated[
+        str | None, Query(description="自定义结束时间（北京时间，只给日期则含当天）")
+    ] = None,
     keyword: Annotated[str | None, Query(description="标题或正文关键词")] = None,
     q: Annotated[
         str | None,
@@ -189,9 +214,23 @@ async def get_article_query(
     ``q`` 与 ``keyword`` 是同一个东西的两个名字：``keyword`` 是正式名，
     ``q`` 是为了和 ``/sources?q=`` 对齐而留的别名。**不接受**「传了但被静默忽略」
     这种结果——那正是本轮修掉的那类缺陷（``/sources?province=`` 曾经就这样）。
+
+    ``range``（今日 / 近1周 / 近1个月）与 ``since`` / ``until`` 也是互斥关系而不是
+    优先级关系：两者同时给无法判断用户想要哪个窗口，直接 400 让他选一个，
+    比「按 range 忽略自定义边界」或反之都更诚实。
     """
     if category and category not in CATEGORY_CHOICES:
         raise BadRequest(f"category 取值必须是 {', '.join(CATEGORY_CHOICES)} 之一")
+
+    window = resolve_range(range_key)
+    if window is not None and (since or until):
+        raise BadRequest(
+            "range 与 since/until 二选一：用快捷档就别再传自定义边界，"
+            "要自定义请传 range=custom 或不传 range"
+        )
+    date_from, date_to = (
+        window if window is not None else (parse_day(since), parse_day(until, end_of_day=True))
+    )
 
     province_codes = await resolve_province_codes(session, province)
 
@@ -201,8 +240,8 @@ async def get_article_query(
         adapter_name=source,
         source_name=source_name,
         source_id=source_id,
-        date_from=parse_day(since),
-        date_to=parse_day(until, end_of_day=True),
+        date_from=date_from,
+        date_to=date_to,
         keyword=keyword or q,
         body_only=body_only,
         exclude_duplicates=exclude_duplicates,

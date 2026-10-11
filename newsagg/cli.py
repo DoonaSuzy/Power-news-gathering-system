@@ -59,12 +59,16 @@ from newsagg import __version__
 from newsagg.config import get_settings
 from newsagg.errors import PowerNewsError
 from newsagg.logutil import bind_context, get_logger, setup_logging
+from newsagg.sources_seed import CATEGORY_LABELS
+from newsagg.timefilter import RANGE_KEYS, RANGE_LABELS, describe_range, resolve_range
 
 log = get_logger("cli")
 
 __all__ = ["main", "build_parser"]
 
-_CATEGORY_CHOICES = ("sgcc", "csg", "independent", "hmt", "industry")
+# 合法取值取自种子清单/快捷档定义本身，不再抄字面量：抄的那份加类别或加档位时
+# 一定会漏（API 侧就漏过 gov，20+ 篇文章在 ?category=gov 上 400）。
+_CATEGORY_CHOICES = tuple(CATEGORY_LABELS)
 _STATS_CHOICES = ("overview", "province", "source", "quality", "jobs")
 
 
@@ -113,12 +117,26 @@ def _filters_from_args(args: argparse.Namespace):
             return parsed
         raise PowerNewsError(f"无法解析日期: {value}（示例 2026-10-01 或 2026-10-01 12:30）")
 
+    # 窗口与 API 的 ?range= 走同一个 resolve_range：「近1周」在 CLI 和界面
+    # 必须是同一天到同一天，否则导出的 CSV 和看板数字对不上（与 API 侧同样互斥）。
+    range_key = getattr(args, "range", None)
+    window = resolve_range(range_key)
+    if window is not None and (getattr(args, "since", None) or getattr(args, "until", None)):
+        raise PowerNewsError(
+            "--range 与 --since/--until 二选一；要自定义请用 --range custom 或不传 --range"
+        )
+    if window is not None:
+        date_from, date_to = window
+    else:
+        date_from = _parse_day(getattr(args, "since", None))
+        date_to = _parse_day(getattr(args, "until", None), end=True)
+
     return ArticleFilter(
         province_code=getattr(args, "province", None),
         category=getattr(args, "category", None),
         adapter_name=getattr(args, "source", None),
-        date_from=_parse_day(getattr(args, "since", None)),
-        date_to=_parse_day(getattr(args, "until", None), end=True),
+        date_from=date_from,
+        date_to=date_to,
         keyword=getattr(args, "keyword", None),
         body_only=bool(getattr(args, "body_only", False)),
         exclude_duplicates=bool(getattr(args, "exclude_duplicates", False)),
@@ -129,11 +147,19 @@ def _filters_from_args(args: argparse.Namespace):
 
 def _add_filter_args(parser: argparse.ArgumentParser) -> None:
     """query / export 共用的筛选参数。"""
+    range_help = (
+        "时间快捷档："
+        + "、".join(f"{key}={RANGE_LABELS[key]}" for key in RANGE_KEYS if key != "custom")
+        + f"；{RANGE_LABELS['custom']} = 用 --since/--until 自己给边界。与 --since/--until 互斥"
+    )
     parser.add_argument("--province", metavar="CODE", help="行政区划代码，如 440000")
     parser.add_argument("--category", choices=_CATEGORY_CHOICES, help="来源类别")
     parser.add_argument("--source", metavar="ADAPTER", help="适配器名，如 sgcc_gd")
-    parser.add_argument("--since", metavar="DATE", help="起始时间（北京时间）")
-    parser.add_argument("--until", metavar="DATE", help="结束时间（北京时间，只给日期则含当天）")
+    parser.add_argument("--range", choices=list(RANGE_KEYS), help=range_help)
+    parser.add_argument("--since", metavar="DATE", help="自定义起始时间（北京时间）")
+    parser.add_argument(
+        "--until", metavar="DATE", help="自定义结束时间（北京时间，只给日期则含当天）"
+    )
     parser.add_argument("--keyword", metavar="KW", help="标题或正文关键词")
     parser.add_argument("--body-only", action="store_true", help="只要正文非空的文章")
     parser.add_argument("--exclude-duplicates", action="store_true", help="排除转载标记的文章")
@@ -606,6 +632,8 @@ def cmd_query(args: argparse.Namespace) -> int:
         _print_json(result)
         return 0
 
+    if getattr(args, "range", None):
+        _out(f"时间范围：{describe_range(args.range)}")
     _out(
         f"共 {result['total']} 条，第 {result['page']}/{max(1, result['pages'])} 页"
         f"（每页 {result['page_size']}）"
