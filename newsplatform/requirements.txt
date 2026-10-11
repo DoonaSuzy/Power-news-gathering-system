@@ -27,5 +27,10 @@ pydantic-settings==2.7.0
 # ---- 日志 ----
 structlog==24.4.0
 
+# ---- 监控 ----
+# newsplatform/core/metrics.py 顶层 import，且 main.py 无条件挂载 → 必备依赖，
+# 漏了它镜像里 uvicorn 启动即 ModuleNotFoundError（pyproject 里已列，此处曾缺失）。
+prometheus-client==0.26.0
+
 # ---- 端到端测试用 HTTP 客户端 ----
 httpx==0.28.1

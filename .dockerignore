@@ -1,0 +1,31 @@
+# 构建上下文 = 仓库根（compose 里 context: .），这里只放「不该进上下文」的东西。
+# 注意：.dockerignore 必须待在上下文根目录才生效——放在 newsplatform/ 下
+# 配 dockerfile 路径会被 Docker 忽略（BuildKit 只认 <dockerfile>.dockerignore）。
+.git/
+.github/
+.workbuddy/
+.pytest_cache/
+.pytest_v.txt
+.ruff_cache/
+.redis/
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# 本地数据与产物：镜像里用不到，且体积大 / 含本机状态
+data/
+_dist/
+logs/
+docs/
+powersdk/
+tests/
+scripts/
+deploy/
+
+# 密钥与本地配置永不进镜像（.env 由 compose 的 env_file 注入）
+.env
+*.env
+*.pem
+*.key
+id_*

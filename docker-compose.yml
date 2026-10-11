@@ -1,0 +1,185 @@
+# 电力新闻聚合 + 数据中台 —— 全栈编排
+#
+# 用法：
+#   docker compose --env-file .env up -d --build              # 核心栈（mysql/redis/fastapi/scheduler/worker）
+#   docker compose --env-file .env --profile ops up -d        # 再加 Prometheus / Grafana
+#
+# 三个约定
+# 1) 采集层读 POWERNEWS_*，中台读 POWERNEWS_PLATFORM_*（见 .env.example）。
+#    DSN 在本文件里用「用户/口令/库名」三段拼出来，主机名固定为服务名 mysql——
+#    这样 .env 只需维护一份口令，且容器网络与本机开发互不干扰。
+# 2) 一个镜像三种角色：fastapi 用 Dockerfile 的 CMD，scheduler / worker
+#    各自覆盖 command。scrapy + sqlalchemy 装三份是浪费，内存只有 ~3.8G。
+# 3) 宿主机 8000 端口已被同机的 newsagg-fastapi 占用，中台对外走 8080。
+name: power-news
+
+x-app-env: &app-env
+  POWERNEWS_MYSQL_HOST: mysql
+  POWERNEWS_MYSQL_PORT: "3306"
+  POWERNEWS_MYSQL_USER: ${POWERNEWS_MYSQL_USER:?POWERNEWS_MYSQL_USER 未设置}
+  POWERNEWS_MYSQL_PASSWORD: ${POWERNEWS_MYSQL_PASSWORD:?POWERNEWS_MYSQL_PASSWORD 未设置}
+  POWERNEWS_MYSQL_DATABASE: ${POWERNEWS_MYSQL_DATABASE:?POWERNEWS_MYSQL_DATABASE 未设置}
+  POWERNEWS_REDIS_URL: redis://redis:6379/0
+  POWERNEWS_PLATFORM_DATABASE_URL: >-
+    mysql+aiomysql://${POWERNEWS_MYSQL_USER}:${POWERNEWS_MYSQL_PASSWORD}@mysql:3306/${POWERNEWS_PLATFORM_MYSQL_DATABASE:?POWERNEWS_PLATFORM_MYSQL_DATABASE 未设置}?charset=utf8mb4
+  POWERNEWS_PLATFORM_COLLECTOR_DATABASE_URL: >-
+    mysql+aiomysql://${POWERNEWS_MYSQL_USER}:${POWERNEWS_MYSQL_PASSWORD}@mysql:3306/${POWERNEWS_MYSQL_DATABASE}?charset=utf8mb4
+  POWERNEWS_PLATFORM_REDIS_URL: redis://redis:6379/1
+  POWERNEWS_PLATFORM_SECRET_KEY: ${POWERNEWS_PLATFORM_SECRET_KEY:?POWERNEWS_PLATFORM_SECRET_KEY 未设置}
+  POWERNEWS_PLATFORM_BOOTSTRAP_ADMIN_TOKEN: ${POWERNEWS_PLATFORM_BOOTSTRAP_ADMIN_TOKEN:-}
+  POWERNEWS_LOG_LEVEL: ${POWERNEWS_LOG_LEVEL:-INFO}
+
+services:
+  mysql:
+    image: mysql:8.4
+    container_name: power-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${POWERNEWS_MYSQL_ROOT_PASSWORD:-root_dev_pwd}
+      MYSQL_DATABASE: ${POWERNEWS_MYSQL_DATABASE:-power_news}
+      MYSQL_USER: ${POWERNEWS_MYSQL_USER:-newsagg}
+      MYSQL_PASSWORD: ${POWERNEWS_MYSQL_PASSWORD:-newsagg_dev_pwd}
+      TZ: Asia/Shanghai
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_0900_ai_ci
+      --default-time-zone=+00:00
+    ports:
+      # 映射到宿主机，方便本机 Navicat / DBeaver / mysql CLI 直连 127.0.0.1:3306
+      - "${POWERNEWS_MYSQL_PORT:-3306}:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      # 仅**空数据卷**时执行。中台库不在这里建：platform_schema.sql 里没有 USE 语句，
+      # 挂进 initdb.d 会把中台表建到采集库里。新库请照 docs/数据中台运行手册.md 跑
+      # newsagg init-db + scripts/load_platform_db.py。
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot",
+             "-p${POWERNEWS_MYSQL_ROOT_PASSWORD:-root_dev_pwd}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    networks: [power-net]
+
+  redis:
+    image: redis:7-alpine
+    container_name: power-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--save", ""]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    networks: [power-net]
+
+  fastapi:
+    build:
+      context: .
+      dockerfile: newsplatform/Dockerfile
+    container_name: power-fastapi
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      <<: *app-env
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "${POWERNEWS_PLATFORM_HOST_PORT:-8080}:8000"
+    networks: [power-net]
+
+  scheduler:
+    build:
+      context: .
+      dockerfile: newsplatform/Dockerfile
+    container_name: power-scheduler
+    restart: unless-stopped
+    # --loop 才是常驻守护；不带它 schedule 只跑一轮就退出，
+    # 配 restart: unless-stopped 会变成无限重启循环。
+    command: ["python", "-m", "newsagg", "schedule", "--loop"]
+    env_file:
+      - .env
+    environment:
+      <<: *app-env
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [power-net]
+
+  worker:
+    build:
+      context: .
+      dockerfile: newsplatform/Dockerfile
+    container_name: power-worker
+    restart: unless-stopped
+    # supervisor 起 POWERNEWS_WORKER_COUNT 个子进程并负责重启
+    command: ["python", "-m", "newsagg", "supervisor"]
+    env_file:
+      - .env
+    environment:
+      <<: *app-env
+      POWERNEWS_WORKER_COUNT: ${POWERNEWS_WORKER_COUNT:-2}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks: [power-net]
+    # 水平扩展采集能力：docker compose up -d --scale worker=3
+    # （scale 时须去掉 container_name，并用 supervisor 而非裸 worker）
+
+  # ---- 监控栈：默认不启动，--profile ops 才拉起（内存紧张）----
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: power-prometheus
+    restart: unless-stopped
+    profiles: ["ops"]
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    depends_on:
+      - fastapi
+    networks: [power-net]
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: power-grafana
+    restart: unless-stopped
+    profiles: ["ops"]
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    depends_on:
+      - prometheus
+    networks: [power-net]
+
+volumes:
+  mysql_data:
+  redis_data:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  power-net:
+    driver: bridge
