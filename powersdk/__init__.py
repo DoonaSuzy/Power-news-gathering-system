@@ -20,6 +20,24 @@
 * 多环境配置体系（dev / test / prod，``POWERSDK_ENV`` 切换）；
 * 内置数据校验与告警（准确率阈值 0.998，可插拔 AlertSink）；
 * pypinyin 地区索引（中文名 / 拼音 / 缩写 / 行政区划码互通）+ loguru 日志。
+
+真实数据 vs 演示数据
+--------------------
+11 类都在注册表里，但**只有 3 类在真实库里有数**（见 ``backed_categories()``）：
+
+===========================  =====================================
+类别                          真实落点
+===========================  =====================================
+``weather``                   24 张 ``wx_{大区}_{产品}`` 宽表
+``electricity_price``          ``market_prices`` / ``power_spot``
+``coal_price``                 ``market_prices`` / ``ceci_import``
+===========================  =====================================
+
+其余 8 类（负荷 / 风光水出力 / 用电量 / 缺口 / 预测）没有采集器在写，
+接上 ``MySQLTimeSeriesSource`` 或 ``HttpTimeSeriesSource`` 后会抛
+:class:`UnsupportedCategoryError` 说清「没有这份数据」，
+而**不会**返回一份看起来很像的合成曲线。想要演示数据请用默认的
+:class:`InMemoryTimeSeriesSource`（确定性合成，仅用于跑通流程）。
 """
 
 from __future__ import annotations
@@ -42,11 +60,14 @@ from .errors import (
     ConfigError,
     DataSourceError,
     PowerSDKError,
+    UnavailableParamError,
     UnknownCategoryError,
     UnknownParamError,
     UnknownRegionError,
+    UnsupportedCategoryError,
     ValidationError,
 )
+from .http_source import HttpTimeSeriesSource
 from .interpolation import (
     DEFAULT_METHOD,
     INTERP_METHODS,
@@ -83,23 +104,35 @@ from .pinyin import (
 )
 from .timeseries import (
     CANONICAL_COLUMNS,
+    CATEGORY_BINDINGS,
     CATEGORY_REGISTRY,
+    DAILY_UNIT_OVERRIDES,
     DEFAULT_REGIONS,
     GRANULARITIES,
     GRANULARITY_ALIASES,
     GRANULARITY_FREQ,
+    PROVINCE_AGGREGATION,
+    WEATHER_COLUMN_UNIT,
+    WEATHER_PARAM_TO_COLUMN,
     WEATHER_PARAMS,
+    WEATHER_PRODUCTS,
     Category,
     CategorySpec,
     InMemoryTimeSeriesSource,
     MySQLTimeSeriesSource,
+    SourceBinding,
     TimeSeriesSource,
     WeatherParamSpec,
+    backed_categories,
     categories,
     category_spec,
     granularity_freq,
+    province_projection,
     resolve_category,
     resolve_granularity,
+    unbacked_categories,
+    weather_column,
+    weather_unit,
 )
 from .utils import (
     UNIT_FACTORS,
@@ -141,7 +174,13 @@ __all__ = [
     "CATEGORY_REGISTRY", "GRANULARITIES", "GRANULARITY_FREQ", "GRANULARITY_ALIASES",
     "resolve_granularity", "granularity_freq", "CANONICAL_COLUMNS",
     "TimeSeriesSource", "InMemoryTimeSeriesSource", "MySQLTimeSeriesSource",
+    "HttpTimeSeriesSource",
     "DEFAULT_REGIONS", "WEATHER_PARAMS", "WeatherParamSpec",
+    # 真实库落点（SDK 类别 ↔ 物理 schema）
+    "CATEGORY_BINDINGS", "SourceBinding", "backed_categories", "unbacked_categories",
+    "WEATHER_PRODUCTS", "WEATHER_PARAM_TO_COLUMN", "WEATHER_COLUMN_UNIT",
+    "DAILY_UNIT_OVERRIDES", "weather_unit",
+    "PROVINCE_AGGREGATION", "province_projection", "weather_column",
     # 插值
     "INTERP_METHODS", "METHOD_CATALOG", "METHOD_ALIASES", "NATIVE_METHODS", "SCIPY_METHODS",
     "DEFAULT_METHOD", "MethodSpec", "resolve_method", "canonical_method",
@@ -162,5 +201,6 @@ __all__ = [
     "PROVINCES", "SINGLE_CHAR_ALIASES",
     # 异常
     "PowerSDKError", "ConfigError", "DataSourceError", "UnknownCategoryError",
+    "UnsupportedCategoryError", "UnavailableParamError",
     "UnknownRegionError", "UnknownParamError", "ValidationError",
 ]

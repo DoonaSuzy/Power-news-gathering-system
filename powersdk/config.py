@@ -63,6 +63,7 @@ class EnvProfile:
     batch_size: int
     accuracy_threshold: float
     cache_ttl: int
+    api_base_url: str = ""
     description: str = ""
 
 
@@ -79,6 +80,7 @@ ENV_PROFILES: dict[str, EnvProfile] = {
         batch_size=5_000,
         accuracy_threshold=0.99,
         cache_ttl=60,
+        api_base_url="http://127.0.0.1:8000/api/v1",
         description="本地开发：详细日志、小批量、宽松准确率阈值",
     ),
     "test": EnvProfile(
@@ -92,6 +94,7 @@ ENV_PROFILES: dict[str, EnvProfile] = {
         batch_size=10_000,
         accuracy_threshold=0.998,
         cache_ttl=30,
+        api_base_url="http://127.0.0.1:8000/api/v1",
         description="测试/CI：内存或影子库、标准阈值",
     ),
     "prod": EnvProfile(
@@ -105,6 +108,7 @@ ENV_PROFILES: dict[str, EnvProfile] = {
         batch_size=100_000,
         accuracy_threshold=0.999,
         cache_ttl=300,
+        api_base_url="https://power-data.internal/api/v1",
         description="生产：只读账号、大批量、严格阈值",
     ),
 }
@@ -127,6 +131,13 @@ class Settings:
     batch_size: int = 5_000
     accuracy_threshold: float = 0.998
     cache_ttl: int = 60
+
+    #: 数据中台时序接口基址（含 ``/api/v1``），供 :class:`HttpTimeSeriesSource` 使用
+    api_base_url: str = "http://127.0.0.1:8000/api/v1"
+    #: Bearer Token。只从 ``POWERSDK_API_TOKEN`` 读，**默认空串**——
+    #: 把任何真实 key 写进代码就等于把它发布到 PyPI。
+    api_token: str = ""
+    api_timeout: float = 30.0
 
     # ------------------------------------------------------------------ 派生
     @property
@@ -168,6 +179,7 @@ class Settings:
             batch_size=profile.batch_size,
             accuracy_threshold=profile.accuracy_threshold,
             cache_ttl=profile.cache_ttl,
+            api_base_url=profile.api_base_url,
         )
         if overrides:
             settings = replace(settings, **overrides)
@@ -219,10 +231,14 @@ class Settings:
             batch_size=_int("POWERSDK_BATCH_SIZE", settings.batch_size),
             accuracy_threshold=_float("POWERSDK_ACCURACY_THRESHOLD", settings.accuracy_threshold),
             cache_ttl=_int("POWERSDK_CACHE_TTL", settings.cache_ttl),
+            api_base_url=_str("POWERSDK_API_BASE_URL", settings.api_base_url),
+            # Token 只走环境变量：写进环境画像就等于把钥匙发布到 PyPI
+            api_token=_str("POWERSDK_API_TOKEN", settings.api_token),
+            api_timeout=_float("POWERSDK_API_TIMEOUT", settings.api_timeout),
         )
 
     def as_dict(self) -> dict[str, Any]:
-        """导出为可日志化/可序列化的字典（密码脱敏）。"""
+        """导出为可日志化/可序列化的字典（密码与 Token 脱敏）。"""
         return {
             "env": self.env,
             "tz": self.tz,
@@ -234,6 +250,10 @@ class Settings:
             "batch_size": self.batch_size,
             "accuracy_threshold": self.accuracy_threshold,
             "cache_ttl": self.cache_ttl,
+            "api_base_url": self.api_base_url,
+            # 只暴露「有没有」，不暴露值——这个字典会进日志
+            "api_token": "***" if self.api_token else "",
+            "api_timeout": self.api_timeout,
         }
 
 

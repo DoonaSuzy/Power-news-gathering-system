@@ -37,6 +37,7 @@ from .timeseries import (
     Category,
     InMemoryTimeSeriesSource,
     TimeSeriesSource,
+    backed_categories,
     categories,
     category_spec,
     resolve_category,
@@ -183,11 +184,17 @@ class PowerDataClient:
         return self.last_report.accuracy if self.last_report else None
 
     def healthcheck(self) -> dict[str, Any]:
-        """自检信息（配置脱敏 + 数据源可用性）。"""
+        """自检信息（配置脱敏 + 数据源可用性）。
+
+        探针固定用 ``weather`` + ``2025-01-01``：这是三类数据源（内存 / MySQL /
+        HTTP）都有数的一个日期；换成 ``load`` 会让自检永远是 degraded，
+        因为真实库里目前根本没有负荷采集器。
+        """
         info: dict[str, Any] = {"env": self.settings.env, "settings": self.settings.as_dict()}
         info["source"] = type(self.source).__name__
+        info["backed_categories"] = backed_categories()
         try:
-            probe = self.source.fetch("load", start="2025-01-01", end="2025-01-01")
+            probe = self.source.fetch("weather", start="2025-01-01", end="2025-01-01")
             info["source_rows"] = int(len(probe))
             info["status"] = "ok"
         except PowerSDKError as exc:  # 例如 MySQL 源离线
