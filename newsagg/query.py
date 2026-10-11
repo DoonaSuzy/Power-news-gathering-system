@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
@@ -33,7 +33,7 @@ class ArticleFilter:
     page: int = 1
     page_size: int = 20
 
-    def normalized(self) -> "ArticleFilter":
+    def normalized(self) -> ArticleFilter:
         """把分页参数收敛到合法范围。"""
         self.page = max(1, int(self.page or 1))
         self.page_size = max(1, min(_MAX_PAGE_SIZE, int(self.page_size or 20)))

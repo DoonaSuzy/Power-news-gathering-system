@@ -1,0 +1,31 @@
+# ============================================================
+# Power News Aggregator —— 数据中台（newsplatform）运行依赖
+#
+# 采集层依赖见上层 ../requirements.txt
+# 一键安装全部：pip install -r requirements.txt -r newsplatform/requirements.txt
+#
+# 版本与 pyproject.toml 的 [project].dependencies 保持一致。
+# ============================================================
+
+# ---- Web 框架 ----
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# ---- 数据库（异步 ORM）----
+# 注意：2.0.x 的 aiomysql 方言复用了 pymysql 的 do_ping，而它靠「本机 PyMySQL 的
+# ping 默认值」决定调用形态；当 PyMySQL 的默认值是 False 时会调无参 ping()，
+# 与 aiomysql 适配器的 ping(reconnect) 签名不匹配 -> 开启 pool_pre_ping 就 500。
+# 该问题与 SQLAlchemy 小版本无关（2.0.36 / 2.0.43 均复现），已在
+# newsplatform/core/database.py 里用 do_ping 补丁显式修掉，故这里不做版本回退。
+sqlalchemy[asyncio]==2.0.43
+aiomysql==0.2.0
+
+# ---- 配置与校验 ----
+pydantic==2.10.4
+pydantic-settings==2.7.0
+
+# ---- 日志 ----
+structlog==24.4.0
+
+# ---- 端到端测试用 HTTP 客户端 ----
+httpx==0.28.1

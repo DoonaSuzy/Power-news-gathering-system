@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 
 from sqlalchemy import delete, func, select, update
@@ -19,7 +19,7 @@ __all__ = ["ApiKeyRepository", "AuditRepository", "SnapshotRepository"]
 
 
 def _utcnow() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class ApiKeyRepository(BaseRepository):

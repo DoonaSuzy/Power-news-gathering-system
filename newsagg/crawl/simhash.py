@@ -32,7 +32,10 @@ def _tokens(text: str) -> list[str]:
     if not chars:
         return []
     tokens = list(chars)
-    tokens.extend(a + b for a, b in zip(chars, chars[1:]))
+    # 这里 zip 的两侧长度**刻意**不相等：chars[1:] 比 chars 少一个元素，
+    # 正是「相邻字两两组合」想要的语义。因此显式写 strict=False ——
+    # 若写成 strict=True，每次调用都会直接抛 ValueError。
+    tokens.extend(a + b for a, b in zip(chars, chars[1:], strict=False))
     return tokens
 
 

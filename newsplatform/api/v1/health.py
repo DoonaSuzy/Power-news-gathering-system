@@ -14,7 +14,6 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Response, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from newsplatform.core.cache import get_cache
 from newsplatform.core.config import get_platform_settings
@@ -36,7 +35,21 @@ import time as _time  # noqa: E402  - 放在此处避免与上面 import 混淆
 STARTED_AT = _time.time()
 
 
-@router.get("/health", summary="健康检查", response_model=None)
+@router.get(
+    "/health",
+    summary="健康检查",
+    response_model=None,
+    # 这是**唯一免鉴权**的接口，要覆盖掉 app 上的全局 security（见
+    # ``main.py`` 的 ``_OPENAPI_SECURITY_EXTRA``），否则文档会给它也加一把锁，
+    # 编排/巡检的人会误以为探活也要带 Token。
+    #
+    # 为什么用 ``openapi_extra`` 而不是 ``security=[]``：
+    # ``APIRouter.get()`` **没有** ``security`` 参数（那是 ``APIRoute`` 的），
+    # 传了会直接 ``TypeError``。而 FastAPI 生成 operation 时走的是
+    # ``operation.setdefault("security", []).extend(...)``——键已存在就不再覆盖，
+    # 所以这里预置一个空列表是安全且有效的。
+    openapi_extra={"security": []},
+)
 async def health(response: Response) -> dict:
     """检查平台库 / 采集库 / Redis，并给出最近一篇文章的发布时间。"""
     settings = get_platform_settings()

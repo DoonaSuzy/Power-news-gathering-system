@@ -16,8 +16,10 @@ tzdata==2026.5
 gne==0.3.1
 
 # ---- 开发 / 测试依赖 ----
+# pytest-asyncio 0.25 与 pytest 9.1.1 依赖冲突（ResolutionImpossible），
+# 实测可用组合是 pytest 9.1.1 + pytest-asyncio 1.4.0。
 pytest==9.1.1
-pytest-asyncio==0.25.0
+pytest-asyncio==1.4.0
 fakeredis==2.39.0
 freezegun==1.5.1
-ruff==0.8.4
+ruff==0.17.0

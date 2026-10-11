@@ -860,7 +860,7 @@ def source_table(prov: dict, crawl_idx: dict, probe_idx: dict) -> str:
         c = crawl_idx.get(s["id"], {})
         p = probe_idx.get(s["id"], {})
         http = next((x for x in p.get("probes", []) if x.get("scheme") == "http"), {})
-        https = next((x for x in p.get("probes", []) if x.get("scheme") == "https"), {})
+        next((x for x in p.get("probes", []) if x.get("scheme") == "https"), {})
         http_txt = f"{http.get('status','-')}/{http.get('length','-')}"
         if c:
             saved = c.get("saved", 0)
@@ -1027,7 +1027,7 @@ def render_readme(crawl: dict, probe: dict, crawl_idx: dict) -> str:
         "",
         "## 总览",
         "",
-        f"- 来源清单：**45 条**（国网 27 + 南网 5 + 独立电网 1 + 港澳台 3 + 行业 3 + 政府 6）",
+        "- 来源清单：**45 条**（国网 27 + 南网 5 + 独立电网 1 + 港澳台 3 + 行业 3 + 政府 6）",
         f"- 已归档文章：**{total_articles} 篇**",
         f"- 成功来源：**{ok_sources} 个**；未成功来源：{fail_sources} 个",
         f"- 省份条目：**{len(PROVINCES)} 个**　→　🟢 已攻克 {ok_count}　🟡 部分攻克 {part_count}　🔴 未攻克 {fail_count}",

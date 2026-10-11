@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,13 +29,48 @@ __all__ = ["StatsService"]
 
 
 class StatsService:
-    """采集统计聚合。"""
+    """采集统计聚合。
 
-    def __init__(self, session: AsyncSession, cache: Cache | None = None) -> None:
+    为什么需要**两个**会话
+    ----------------------
+    统计读的是采集库（``powernews``：articles / sources / crawl_jobs），
+    但 ``stats_snapshots`` 这张快照表属于中台库（``powernews_platform``）。
+
+    早先的实现只注入了一个会话并把它同时用于读写，结果 ``POST /stats/snapshot``
+    实际执行的是：
+
+        INSERT INTO powernews.stats_snapshots ...   -- 表在中台库，这里不存在！
+
+    报错是 ``(1146, "Table 'powernews.stats_snapshots' doesn't exist")``——
+    错误信息里带着库名，却很容易被当成「表没建」去排查 DDL，
+    而真正的问题是**连接用错了库**。
+
+    所以这里把两个会话显式分开：``session`` 只读采集库，
+    ``platform_session`` 只用于落快照；后者缺失时**直接抛错**，
+    不做 ``or session`` 之类的静默回落——那正是当初埋下这个 bug 的写法。
+    """
+
+    def __init__(
+        self,
+        session: AsyncSession,
+        *,
+        platform_session: AsyncSession | None = None,
+        cache: Cache | None = None,
+    ) -> None:
         self.session = session
+        self.platform_session = platform_session
         self.repo = StatsRepository(session)
-        self.snapshots = SnapshotRepository(session)
         self.cache = cache or get_cache()
+
+    @property
+    def snapshots(self) -> SnapshotRepository:
+        """快照仓储（中台库）。没有中台库会话时立即失败，避免写错库。"""
+        if self.platform_session is None:
+            raise RuntimeError(
+                "缺少中台库会话：stats_snapshots 属于 powernews_platform，"
+                "不能用采集库会话写入。构造 StatsService 时请传 platform_session=..."
+            )
+        return SnapshotRepository(self.platform_session)
 
     # ---------------- 概览 ----------------
     async def overview(self) -> StatsOverview:
@@ -93,7 +128,7 @@ class StatsService:
     # ---------------- 快照 ----------------
     async def write_snapshot(self, *, snapshot_date: date | None = None) -> dict[str, Any]:
         """把概览与质量物化一份到 ``stats_snapshots``（由定时任务调用）。"""
-        day = snapshot_date or datetime.now(timezone.utc).date()
+        day = snapshot_date or datetime.now(UTC).date()
         overview = (await self.overview()).model_dump(mode="json")
         quality = (await self.quality()).model_dump(mode="json")
         await self.snapshots.upsert(

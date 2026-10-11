@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import Depends, Header
@@ -99,7 +99,7 @@ async def require_auth(
         raise Unauthorized("Token 无效")
     if not record.enabled:
         raise Forbidden("该 API Key 已停用")
-    if record.expires_at and record.expires_at < datetime.now(timezone.utc).replace(tzinfo=None):
+    if record.expires_at and record.expires_at < datetime.now(UTC).replace(tzinfo=None):
         raise Forbidden("该 API Key 已过期")
 
     ctx = AuthContext(record.id, record.name, record.scope_set())

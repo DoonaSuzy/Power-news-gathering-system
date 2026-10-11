@@ -18,14 +18,12 @@
 
 from __future__ import annotations
 
-from typing import Callable
-
 from newsagg.config import get_settings
 from newsagg.crawl.session import CrawlSession
 from newsagg.crawl.settings import scrapy_settings
 from newsagg.crawl.spider import SiteSpider
 from newsagg.db import Database
-from newsagg.errors import JobNotFound, LeaseBusy
+from newsagg.errors import JobNotFound
 from newsagg.logutil import bind_context, get_logger
 from newsagg.queue import StreamQueue
 from newsagg.repo import Repository

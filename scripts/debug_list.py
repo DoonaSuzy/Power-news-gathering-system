@@ -17,7 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from newsagg.adapters import ensure_loaded, get_adapter  # noqa: E402
-from scripts.cdp_crawl import new_page, close_page  # noqa: E402
+from scripts.cdp_crawl import close_page, new_page  # noqa: E402
 
 
 def main() -> None:

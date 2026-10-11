@@ -18,7 +18,7 @@
 
 from __future__ import annotations
 
-from typing import AsyncIterator
+from collections.abc import AsyncIterator
 
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -40,8 +40,74 @@ __all__ = [
     "get_database",
     "get_platform_session",
     "get_collector_session",
+    "get_collector_write_session",
     "dispose_database",
 ]
+
+
+# ======================================================================
+# 兼容补丁：SQLAlchemy aiomysql 方言的 do_ping 参数 bug
+# ======================================================================
+# 现象
+# ----
+# 只要引擎带 ``pool_pre_ping=True``，**第二次**从连接池借出同一连接时必然抛：
+#
+#     TypeError: AsyncAdapt_aiomysql_connection.ping()
+#                missing 1 required positional argument: 'reconnect'
+#
+# 首次连接不会触发（新建连接不做 pre-ping），因此表现为「启动探活全 ok，
+# 一有请求就 500」——极具迷惑性。
+#
+# 根因
+# ----
+# 1. ``MySQLDialect_aiomysql`` 自己没有实现 ``do_ping``，沿用了
+#    ``MySQLDialect_pymysql.do_ping``；
+# 2. 而 pymysql 那版 ``do_ping`` 靠 ``_send_false_to_ping`` 决定调用形态：
+#        dbapi_connection.ping(False)   # 判断为 True
+#        dbapi_connection.ping()        # 判断为 False
+# 3. 该判断的实现是**去 import 本机的 pymysql**，再看 py 签名里的 reconnect 默认值——
+#    即使当前方言是 aiomysql 也在看 pymysql，属于上游实现瑕疵；
+# 4. 本机 PyMySQL 的签名是 ``ping(self, reconnect=False)``（默认 False），
+#    判定结果为 ``False`` → 走无参分支 ``ping()``；
+# 5. 但 aiomysql 适配器的签名是 ``ping(self, reconnect: bool)``——**必传**，
+#    于是 TypeError。
+#
+# 为什么不能靠升级/降级依赖绕过
+# ----------------------------
+# 这个 bug 由「本机 PyMySQL 的默认值」和「aiomysql 适配器的签名」共同决定，
+# 与 SQLAlchemy 版本无必然关系（实测 2.0.36 / 2.0.43 均复现）。
+# 换驱动、关掉 pre_ping 都是可用但不划算的退让——前者改动面大，后者丢掉
+# stale connection 防护。所以这里在本项目内**显式覆盖** ``do_ping``，
+# 让行为不再取决于第三方包的版本组合。
+#
+# 语义说明
+# --------
+# ``reconnect=False`` = 「只探测、不自动重连」。这正是 pre-ping 想要的：
+# 连接已死时报错，交由连接池把该连接作废并重建，而不是让驱动悄悄重连后
+# 把陈旧连接的会话状态（事务、临时表）带进业务逻辑。
+def _aiomysql_do_ping(self, dbapi_connection) -> bool:  # noqa: ANN001
+    """aiomysql 方言的 pre-ping 实现（按适配器的 ``ping(reconnect)`` 签名调用）。"""
+    ping = dbapi_connection.ping
+    try:
+        ping(False)
+    except TypeError:
+        # 兜底：万一底层 DBAPI 的 ping 不接受参数（同步驱动场景），退回无参调用
+        ping()
+    return True
+
+
+def _install_aiomysql_ping_patch() -> None:
+    """给 ``MySQLDialect_aiomysql`` 装补丁（幂等）。"""
+    from sqlalchemy.dialects.mysql.aiomysql import MySQLDialect_aiomysql
+
+    if getattr(MySQLDialect_aiomysql, "_powernews_ping_patched", False):
+        return
+    MySQLDialect_aiomysql.do_ping = _aiomysql_do_ping  # type: ignore[method-assign]
+    MySQLDialect_aiomysql._powernews_ping_patched = True  # type: ignore[attr-defined]
+    log.debug("已应用 aiomysql do_ping 兼容补丁")
+
+
+_install_aiomysql_ping_patch()
 
 
 class PlatformBase(DeclarativeBase):
@@ -182,6 +248,36 @@ async def get_platform_session() -> AsyncIterator[AsyncSession]:
 
 
 async def get_collector_session() -> AsyncIterator[AsyncSession]:
-    """采集库会话依赖（只读）。"""
+    """采集库会话依赖（只读）。
+
+    ⚠️ 退出时**不提交**。拿它做写操作会被静默回滚——接口照样返回 200 甚至
+    带着自增 id，库里却什么都没多（本项目实测：返回 ``id=46``，表里仍是 45 行）。
+    要写采集库请用 :func:`get_collector_write_session`。
+    """
     async with get_database().collector_session() as session:
         yield session
+
+
+async def get_collector_write_session() -> AsyncIterator[AsyncSession]:
+    """采集库**写**会话依赖：退出时提交，异常时回滚。
+
+    唯一的合法用途是中台修改 ``sources`` 的**配置列**（``enabled`` /
+    ``list_url`` / ``crawl_interval_hours`` / ``priority`` / ``note`` / ``status``，
+    白名单见 ``SourceRepository.UPDATABLE_FIELDS``）。
+
+    「中台对采集库只读」是我们给两个库划的边界，但来源配置是个**有意的例外**：
+    采集层负责产出数据，配置的增删改查交给中台，否则运维改一个 ``enabled``
+    还得登服务器跑 CLI。既然有这个例外，就把它显式化成独立依赖——
+    这样「这个路由会改采集库」在函数签名里就能看出来，
+    而不是从只读会话里偷偷写（那正是原先 5 个写接口全部静默失效的原因）。
+
+    产出行（``articles`` / ``crawl_jobs`` / ``article_tasks`` / ``lease_*``）
+    仍然永远只由采集层写。
+    """
+    async with get_database().collector_session() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise

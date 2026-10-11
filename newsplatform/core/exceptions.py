@@ -29,6 +29,7 @@ __all__ = [
     "AppError",
     "BadRequest",
     "ValidationFailed",
+    "DataOutOfRange",
     "Unauthorized",
     "Forbidden",
     "ResourceNotFound",
@@ -48,6 +49,7 @@ ERROR_CODES: dict[int, str] = {
     0: "ok",
     1000: "bad_request",
     1001: "validation_failed",
+    1002: "data_out_of_range",
     2001: "unauthorized",
     2002: "forbidden",
     3001: "resource_not_found",
@@ -97,6 +99,21 @@ class BadRequest(AppError):
 class ValidationFailed(AppError):
     status_code = 422
     code = 1001
+
+
+class DataOutOfRange(ValidationFailed):
+    """入参通过了 Pydantic 校验，但超出了数据库列的可存储范围。
+
+    典型场景：``sources.crawl_interval_hours`` 在 DDL 里是 ``TINYINT``
+    （有符号，上限 127），而接口曾一度放行到 168——Pydantic 放行、MySQL 报
+    ``1264 Out of range value``，最终以一个裸 500 抛到客户端。
+
+    单独给它一个码，是为了把「请求参数的问题」和「服务端缺陷」区分开：
+    前者应当 4xx，后者才是 5xx。
+    """
+
+    status_code = 422
+    code = 1002
 
 
 class Unauthorized(AppError):

@@ -31,8 +31,12 @@ __all__ = [
 ]
 
 #: 异步安全的日志上下文（contextvars 随协程/线程传播）
-_LOG_CONTEXT: contextvars.ContextVar[dict[str, Any]] = contextvars.ContextVar(
-    "powernews_log_context", default={}
+#:
+#: default 用 None 而不是 {}：可变对象当默认值时，所有 context 共享同一个 dict，
+#: 一旦有人就地修改（``_LOG_CONTEXT.get()["k"] = v``）就会跨任务串味。
+#: 读取处统一写 ``_LOG_CONTEXT.get() or {}``。
+_LOG_CONTEXT: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
+    "powernews_log_context", default=None
 )
 
 _EXTRA_KEYS = ("job_id", "run_id", "request_id", "source", "adapter", "province_code")
@@ -64,7 +68,7 @@ class _ContextFilter(logging.Filter):
     """把 contextvars 中的上下文字段挂到每条日志记录上。"""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        ctx = _LOG_CONTEXT.get()
+        ctx = _LOG_CONTEXT.get() or {}
         if ctx:
             record._ctx = ctx  # type: ignore[attr-defined]
         return True
@@ -72,14 +76,14 @@ class _ContextFilter(logging.Filter):
 
 def bind_context(**kwargs: Any) -> contextvars.Token:
     """绑定日志上下文，返回可用于还原的 token。"""
-    ctx = dict(_LOG_CONTEXT.get())
+    ctx = dict(_LOG_CONTEXT.get() or {})
     ctx.update({k: v for k, v in kwargs.items() if v is not None})
     return _LOG_CONTEXT.set(ctx)
 
 
 def current_context() -> dict[str, Any]:
     """当前日志上下文副本。"""
-    return dict(_LOG_CONTEXT.get())
+    return dict(_LOG_CONTEXT.get() or {})
 
 
 _configured = False

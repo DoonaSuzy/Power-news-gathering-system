@@ -20,7 +20,13 @@ from typing import Any
 __all__ = ["setup_platform_logging", "get_logger", "bind_log_context", "LogContextFilter"]
 
 #: 额外的结构化字段（写入 JSON 日志）
-_CONTEXT: ContextVar[dict[str, Any]] = ContextVar("powernews_platform_log_ctx", default={})
+#
+# default 用 None 而不是 {}：可变对象当默认值时，所有 context 共享同一个 dict，
+# 一旦有人执行 _CONTEXT.get()['k'] = v 就地修改，就会跨请求串味。
+# 读的地方统一写 ``_CONTEXT.get() or {}``。
+_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
+    "powernews_platform_log_ctx", default=None
+)
 
 _EXTRA_KEYS = ("request_id", "method", "path", "status_code", "duration_ms", "client_ip")
 
@@ -32,7 +38,7 @@ class LogContextFilter(logging.Filter):
     """把 contextvars 里的字段挂到 LogRecord 上，供格式化器取用。"""
 
     def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003 - logging API 约定
-        ctx = _CONTEXT.get()
+        ctx = _CONTEXT.get() or {}
         if ctx:
             record._ctx = ctx  # type: ignore[attr-defined]
         return True
@@ -72,7 +78,7 @@ class _TextFormatter(logging.Formatter):
 
 def bind_log_context(**kwargs: Any) -> None:
     """更新日志上下文（合并语义，不覆盖未传入的键）。"""
-    ctx = dict(_CONTEXT.get())
+    ctx = dict(_CONTEXT.get() or {})
     ctx.update({k: v for k, v in kwargs.items() if v is not None})
     _CONTEXT.set(ctx)
 

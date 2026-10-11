@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -54,7 +54,7 @@ class AdminService:
 
         raw = generate_api_key()
         expires_at = (
-            datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(days=int(expires_in_days))
+            datetime.now(UTC).replace(tzinfo=None) + timedelta(days=int(expires_in_days))
             if expires_in_days
             else None
         )
@@ -107,5 +107,5 @@ class AuditService:
         """清理 ``keep_days`` 天前的日志。"""
         if keep_days < 1:
             raise BadRequest("keep_days 必须 >= 1")
-        before = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(days=keep_days)
+        before = datetime.now(UTC).replace(tzinfo=None) - timedelta(days=keep_days)
         return await self.repo.purge_before(before)

@@ -77,28 +77,30 @@ class ArticleService:
         page_size = 500
 
         # 分页循环拉取，直到取完或触顶（EXPORT_MAX_ROWS 防止一次请求拖垮内存）
-        page = 1
+        # 关键：offset 必须随已取行数推进，否则每轮拿回同一批数据。
         while len(rows) < EXPORT_MAX_ROWS:
             batch_query = ArticleQuery(
-                province_code=q.province_code,
+                province_codes=q.province_codes,
                 category=q.category,
                 adapter_name=q.adapter_name,
+                source_name=q.source_name,
                 source_id=q.source_id,
                 date_from=q.date_from,
                 date_to=q.date_to,
                 keyword=q.keyword,
                 body_only=q.body_only,
                 exclude_duplicates=q.exclude_duplicates,
-                page=page,
+                page=1,
                 page_size=page_size,
             )
-            batch = await self.repo.iter_export_rows(batch_query, batch=page_size)
+            batch = await self.repo.iter_export_rows(
+                batch_query, batch=page_size, offset=len(rows)
+            )
             if not batch:
                 break
             rows.extend(batch)
             if len(batch) < page_size:
                 break
-            page += 1
         if len(rows) >= EXPORT_MAX_ROWS:
             truncated = True
             rows = rows[:EXPORT_MAX_ROWS]

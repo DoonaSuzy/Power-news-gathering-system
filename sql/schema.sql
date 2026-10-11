@@ -252,6 +252,46 @@ CREATE TABLE IF NOT EXISTS crawl_runs (
   DEFAULT CHARSET = utf8mb4
   COLLATE = utf8mb4_general_ci COMMENT = '协调器批次';
 
+-- ---------------------------------------------------------------------
+-- market_prices —— 市场行情指标（LNG 现价 / 电煤指数 / 电力现货价）
+--
+--  ★ 与 articles 的本质区别 ★
+--  articles 是「非结构化新闻正文」：一篇一行，天然去重靠 URL 唯一键。
+--  本表是「结构化时间序列指标」：一个 (数据集, 区域, 规格, 日期, 来源)
+--  合起来才构成一个数据点。因此唯一键**必须**带上 price_date 与 grade，
+--  否则每天重复采集会把同一期数据写成多行——这类表最常见的脏数据来源。
+--
+--  为什么 region 默认 'CN' 而不是 NULL：
+--  全国口径与「某省未采集到」是两件事。用非空 + 'CN' 表示前者，
+--  让 `WHERE region='CN'` 与 `GROUP BY region` 都不会踩到 NULL 语义的坑。
+--
+--  raw JSON 保留原文字段，便于口径调整后重算，不必回源重抓。
+-- ---------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS market_prices (
+    id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    dataset       VARCHAR(32)   NOT NULL COMMENT 'lng_spot=LNG现价 / lng_quote=LNG挂牌报价明细 / lng_signal=LNG均差信号 / ceci_import=电煤进口指数 / ceci_pmi=电煤采购经理人指数 / power_spot=电力现货价',
+    region        VARCHAR(64)   NOT NULL DEFAULT 'CN' COMMENT '区域或省份；全国口径统一用 CN。lng_quote 里是「销售地」（如 江苏 / 广东(粤东) / 不限）',
+    grade         VARCHAR(64)   NOT NULL DEFAULT '' COMMENT '规格口径：日前/实时、日前·煤机、到岸标煤单价、CLP、生意社基准价、企业报价·均价；lng_quote 里是「交货点」（液厂/接收站名，如 宁波接收站）',
+    price_date    DATE          NOT NULL COMMENT '数据所属日期（业务日期，不是采集时间）',
+    value         DECIMAL(14,4) NULL     COMMENT '价格或指数值（lng_signal 为价差，可为负）',
+    unit          VARCHAR(24)   NOT NULL DEFAULT '' COMMENT '元/吨、元/兆瓦时、%、元/标方',
+    change_value  DECIMAL(14,4) NULL     COMMENT '环比涨跌（绝对值；注意单位可能不同，见 raw.change_unit）',
+    change_pct    DECIMAL(10,4) NULL     COMMENT '环比涨跌幅（%）',
+    period        VARCHAR(48)   NOT NULL DEFAULT '' COMMENT '期次/周期：如 2026年第34期、09-28~10-04',
+    source        VARCHAR(64)   NOT NULL COMMENT '来源标识：cqpgx=重庆石油天然气交易中心 / 100ppi=生意社 / shpgx=上海石油天然气交易中心 / cec=中电联 / gzpec=广州电力交易中心',
+    source_url    VARCHAR(768)  NOT NULL DEFAULT '' COMMENT '数据出处 URL，便于回溯核对',
+    raw           JSON          NULL     COMMENT '原始字段快照',
+    created_at    TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at    TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_market_point (dataset, region, grade, price_date, source),
+    KEY idx_market_dataset_date (dataset, price_date),
+    KEY idx_market_region (region),
+    KEY idx_market_date (price_date)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_general_ci COMMENT = '市场行情指标（LNG/电煤/电价）';
+
 -- =====================================================================
 -- 视图
 -- =====================================================================

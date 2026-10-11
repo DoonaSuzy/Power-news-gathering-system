@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-from typing import Annotated, Any, Generic, TypeVar
+from typing import Annotated, Any, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, field_validator
 
@@ -70,11 +70,11 @@ class PageMeta(BaseModel):
 
 
 class ArticlePage(PageMeta):
-    items: list["ArticleListItem"] = Field(default_factory=list)
+    items: list[ArticleListItem] = Field(default_factory=list)
 
 
 class SourcePage(PageMeta):
-    items: list["SourceItem"] = Field(default_factory=list)
+    items: list[SourceItem] = Field(default_factory=list)
 
 
 # ======================================================================
@@ -145,7 +145,13 @@ class SourceCreate(_Base):
     list_url: str = ""
     category: Annotated[str, Field(pattern="^(sgcc|csg|independent|hmt|industry)$")] = "sgcc"
     priority: Annotated[int, Field(ge=0, le=9)] = 0
-    crawl_interval_hours: Annotated[int, Field(ge=1, le=168)] = 1
+    crawl_interval_hours: Annotated[
+        int,
+        # 上限 127 对齐 sql/schema.sql 的 TINYINT（有符号）。
+        # 曾经写成 168，Pydantic 放行但 MySQL 报 1264 Out of range，
+        # 用户侧看到的是一个裸 500。改边界时必须同步看 DDL 的列类型。
+        Field(ge=1, le=127),
+    ] = 1
     enabled: bool = True
     note: Annotated[str, Field("", max_length=512)] = ""
 
@@ -162,7 +168,7 @@ class SourceUpdate(_Base):
 
     enabled: bool | None = None
     list_url: Annotated[str | None, Field(None, max_length=512)] = None
-    crawl_interval_hours: Annotated[int | None, Field(None, ge=1, le=168)] = None
+    crawl_interval_hours: Annotated[int | None, Field(None, ge=1, le=127)] = None
     priority: Annotated[int | None, Field(None, ge=0, le=9)] = None
     note: Annotated[str | None, Field(None, max_length=512)] = None
     status: Annotated[str | None, Field(None, pattern="^(active|blocked|degraded)$")] = None

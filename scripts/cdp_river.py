@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import threading
 import time
@@ -16,7 +17,6 @@ import time
 import httpx
 import websocket  # type: ignore
 
-import os
 CDP = os.environ.get("CDP_URL", "http://127.0.0.1:9222")
 
 
@@ -135,7 +135,7 @@ def main() -> None:
             if rid in reqs:
                 reqs[rid]["status"] = p["response"]["status"]
                 reqs[rid]["mime"] = p["response"].get("mimeType", "")
-    for rid, info in list(reqs.items())[:40]:
+    for _rid, info in list(reqs.items())[:40]:
         print(f"  [{info.get('status','?')}] {info['method']:4} {info['url'][:90]}")
 
     # ---- 控制台 ----
@@ -153,7 +153,7 @@ def main() -> None:
 
     # ---- 最终 DOM / Cookie ----
     html_len = cli.eval("document.documentElement.outerHTML.length")
-    print(f"\n=== 最终 DOM ===")
+    print("\n=== 最终 DOM ===")
     print(f"  outerHTML 长度: {html_len}")
     print(f"  body.innerText(前200): {str(cli.eval('document.body.innerText.slice(0,200)'))[:200]}")
     print(f"  title: {cli.eval('document.title')}")

@@ -27,6 +27,11 @@
 - ``export``      导出 CSV（UTF-8 BOM，Excel 直开）
 - ``queue``       Redis 队列概览
 
+**市场行情（结构化时间序列，与新闻并列的第二类数据）**
+
+- ``market-fetch`` 抓取 LNG 现价 / CECI 电煤指数 / 南方区域电力现货，幂等入库
+- ``market-stats`` 查看 ``market_prices`` 的覆盖情况与最新数据
+
 **服务**
 
 - ``serve``       起数据中台（``newsplatform``，惰性导入，未安装 FastAPI 时给出提示）
@@ -46,8 +51,9 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Any, Sequence
+from typing import Any
 
 from newsagg import __version__
 from newsagg.config import get_settings
@@ -177,6 +183,7 @@ def cmd_check(args: argparse.Namespace) -> int:
             expected = {
                 "provinces", "sources", "source_slots", "articles",
                 "urls", "article_tasks", "crawl_jobs", "crawl_runs",
+                "market_prices",
             }
             missing = sorted(expected - set(tables))
             if missing:
@@ -246,8 +253,8 @@ def cmd_validate(_args: argparse.Namespace) -> int:
     """离线校验省字典与来源清单（不连库）。"""
     from newsagg.provinces import MAINLAND_COUNT, PROVINCES, TOTAL_COUNT
     from newsagg.sources_seed import (
-        SOURCES,
         SOURCE_BY_ID,
+        SOURCES,
         count_by_category,
         coverage_codes,
         validate,
@@ -356,7 +363,7 @@ def cmd_crawl_once(args: argparse.Namespace) -> int:
     from newsagg.db import Database
     from newsagg.queue import StreamQueue
     from newsagg.repo import Repository
-    from newsagg.timewindow import JOB_FULL_RESCAN, build_window, window_key
+    from newsagg.timewindow import JOB_FULL_RESCAN, build_window
 
     settings = get_settings()
     db = Database(settings)
@@ -694,6 +701,56 @@ def cmd_queue(args: argparse.Namespace) -> int:
 
 
 # ==========================================================================
+# 市场行情
+# ==========================================================================
+def cmd_market_fetch(args: argparse.Namespace) -> int:
+    """抓取市场行情并幂等入库。"""
+    from newsagg.market.cli import market_fetch
+
+    argv = ["--dataset", args.dataset, "--periods", str(args.periods)]
+    if args.dry_run:
+        argv.append("--dry-run")
+    if args.json:
+        argv.append("--json")
+    return market_fetch(argv)
+
+
+def cmd_market_stats(args: argparse.Namespace) -> int:
+    """查看 ``market_prices`` 覆盖情况。"""
+    from newsagg.market.cli import market_stats
+
+    argv = ["--dataset", args.dataset]
+    if args.latest:
+        argv += ["--latest", str(args.latest)]
+    if args.json:
+        argv.append("--json")
+    return market_stats(argv)
+
+
+# ==========================================================================
+# 气象数据（Open-Meteo）
+# ==========================================================================
+#: ``powernews weather <子命令>`` 的子命令表。参数**原样透传**给
+#: ``newsagg.weather.cli`` —— 气象侧参数较多（产品/窗口/大区/批量/限速），
+#: 在主 CLI 里再镜像一遍会形成第二份定义，改一处漏一处。
+WEATHER_COMMANDS = ("init", "backfill", "daily", "stats", "check")
+
+
+def cmd_weather(args: argparse.Namespace) -> int:
+    """气象数据子命令入口。"""
+    from newsagg.weather import cli as weather_cli
+
+    table = {
+        "init": weather_cli.weather_init,
+        "backfill": weather_cli.weather_backfill,
+        "daily": weather_cli.weather_daily,
+        "stats": weather_cli.weather_stats,
+        "check": weather_cli.weather_check,
+    }
+    return table[args.weather_command](args.rest)
+
+
+# ==========================================================================
 # 服务
 # ==========================================================================
 def cmd_serve(args: argparse.Namespace) -> int:
@@ -847,6 +904,41 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reset-group", action="store_true", help="先销毁消费组（运维用）")
     p.add_argument("--json", action="store_true", help="以 JSON 输出")
     p.set_defaults(func=cmd_queue)
+
+    # ---- market-fetch ----
+    from newsagg.market.models import DATASETS as _MARKET_DATASETS
+
+    _market_choices = ["all", *sorted(_MARKET_DATASETS)]
+    p = sub.add_parser("market-fetch", help="抓取市场行情（LNG 现价 / CECI 电煤指数 / 电力现货）")
+    p.add_argument("--dataset", default="all", choices=_market_choices, help="要抓的数据集")
+    p.add_argument("--periods", type=int, default=1,
+                   help="抓最近多少期（LNG 按天、CECI/现货按周）")
+    p.add_argument("--dry-run", action="store_true", help="只抓不写库（不需要 MySQL）")
+    p.add_argument("--json", action="store_true", help="以 JSON 输出")
+    p.set_defaults(func=cmd_market_fetch)
+
+    # ---- market-stats ----
+    p = sub.add_parser("market-stats", help="查看 market_prices 覆盖情况与最新数据")
+    p.add_argument("--dataset", default="all", choices=_market_choices, help="只看某个数据集")
+    p.add_argument("--latest", type=int, default=0, metavar="N",
+                   help="改为列出最新 N 条明细（默认 0 = 覆盖汇总）")
+    p.add_argument("--json", action="store_true", help="以 JSON 输出")
+    p.set_defaults(func=cmd_market_stats)
+
+    # ---- weather ----
+    p = sub.add_parser(
+        "weather",
+        help="气象数据（Open-Meteo）：建表 / 回填 / 每日采集 / 统计 / 自检",
+    )
+    p.add_argument(
+        "weather_command", choices=list(WEATHER_COMMANDS), metavar="<子命令>",
+        help="init 建表｜backfill 长回填｜daily 每日采集｜stats 统计｜check 自检",
+    )
+    p.add_argument(
+        "rest", nargs=argparse.REMAINDER,
+        help="透传给子命令的参数，例如 `--since 2024-01-01 --regions 华东,华南`",
+    )
+    p.set_defaults(func=cmd_weather)
 
     # ---- serve ----
     p = sub.add_parser("serve", help="起数据中台（newsplatform）")

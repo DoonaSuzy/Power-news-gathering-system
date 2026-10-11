@@ -20,7 +20,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import re
@@ -385,7 +384,7 @@ def main() -> int:
                 cols = [d[0] for d in cur.description]
                 vals = cur.fetchone()
                 print(f"\n[{label}]")
-                for c, v in zip(cols, vals):
+                for c, v in zip(cols, vals, strict=False):
                     print(f"    {c:22} {v}")
             else:
                 print(f"[{label}] {cur.fetchone()[0]} 行")

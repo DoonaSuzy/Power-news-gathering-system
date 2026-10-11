@@ -41,13 +41,10 @@ import httpx  # noqa: E402
 import websocket  # type: ignore  # noqa: E402
 
 from newsagg.adapters import ensure_loaded, get_adapter  # noqa: E402
-from newsagg.provinces import PROVINCE_BY_CODE  # noqa: E402
 from newsagg.sources_seed import CATEGORY_LABELS, SOURCE_BY_ID  # noqa: E402
 from scripts.crawl_and_archive import (  # noqa: E402
     Article,
     CrawlResult,
-    NAV_WORDS,
-    NON_ARTICLE_EXT,
     _province_name,
     candidate_list_urls,
     is_non_article,
@@ -166,7 +163,7 @@ def crawl_source_via_browser(source_id: str, *, limit: int = 20) -> CrawlResult:
     page, tid = new_page()
     try:
         # 1) 找可解析的列表页
-        html, locked_url, items = "", "", []
+        _html, locked_url, items = "", "", []
         last_err = ""
         for cand in candidate_list_urls(primary):
             body = page.navigate(cand, min_len=2000, timeout=30)
@@ -179,7 +176,7 @@ def crawl_source_via_browser(source_id: str, *, limit: int = 20) -> CrawlResult:
                 last_err = f"解析{type(exc).__name__}"
                 continue
             if parsed.items:
-                html, locked_url, items = body, cand, parsed.items
+                _html, locked_url, items = body, cand, parsed.items
                 break
             last_err = "无候选"
 

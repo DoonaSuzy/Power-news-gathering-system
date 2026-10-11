@@ -28,6 +28,11 @@ logs/
 samples/
 backups/
 *.sql.gz
+.pytest_v.txt
+
+# ---- 可再生成的本地数据（体积大 / 含抓取原始证据）----
+data/weather/_geo_cache/
+data/reverse-shpgx/
 *.tar.gz
 
 # ---- IDE / OS ----

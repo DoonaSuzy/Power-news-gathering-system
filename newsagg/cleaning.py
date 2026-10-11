@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 
 __all__ = [
     "PRECISION_SECOND",
@@ -212,12 +212,12 @@ def parse_published(raw: str | None, *, default_year: int | None = None) -> Pars
 
 def to_utc_naive(cst_naive: datetime) -> datetime:
     """北京时间 naive → UTC naive。"""
-    return (cst_naive.replace(tzinfo=CST)).astimezone(timezone.utc).replace(tzinfo=None)
+    return (cst_naive.replace(tzinfo=CST)).astimezone(UTC).replace(tzinfo=None)
 
 
 def to_cst_naive(utc_naive: datetime) -> datetime:
     """UTC naive → 北京时间 naive。"""
-    return (utc_naive.replace(tzinfo=timezone.utc)).astimezone(CST).replace(tzinfo=None)
+    return (utc_naive.replace(tzinfo=UTC)).astimezone(CST).replace(tzinfo=None)
 
 
 def now_cst() -> datetime:
@@ -227,7 +227,7 @@ def now_cst() -> datetime:
 
 def now_utc_naive() -> datetime:
     """当前 UTC 时间（naive）。"""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 # --------------------------------------------------------------------------

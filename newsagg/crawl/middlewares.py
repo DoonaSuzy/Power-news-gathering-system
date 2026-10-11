@@ -74,9 +74,9 @@ class AccessPolicyMiddleware:
         parser = RobotFileParser()
         robots_url = f"{origin}/robots.txt"
         try:
-            from newsagg.crawl.dedup import DEFAULT_HASHES  # noqa: F401  仅确保包内可用
-
             import urllib.request
+
+            from newsagg.crawl.dedup import DEFAULT_HASHES  # noqa: F401  仅确保包内可用
 
             req = urllib.request.Request(
                 robots_url,

@@ -10,15 +10,15 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import case, delete, func, insert, select, update
+from sqlalchemy import case, delete, func, insert, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from newsplatform.core.exceptions import Conflict, SourceNotFound
 from newsplatform.models.orm import Article, CrawlJob, Province, Source
-from newsplatform.repositories.base import BaseRepository, Page
+from newsplatform.repositories.base import BaseRepository, Page, escape_like
 
 __all__ = ["SourceRepository", "ProvinceRepository"]
 
@@ -65,21 +65,36 @@ class SourceRepository(BaseRepository):
     async def list(
         self,
         *,
-        province_code: str | None = None,
+        province_codes: tuple[str, ...] | None = None,
         category: str | None = None,
         enabled: bool | None = None,
+        keyword: str | None = None,
         page: int = 1,
         page_size: int = 50,
     ) -> Page:
-        """列出来源。"""
+        """列出来源。
+
+        ``province_codes`` 是**代码列表**（大区名会展开成多码，见 ``core/provinces.py``）；
+        ``keyword`` 对人可读字段（名称 / 适配器名 / 站点 id）做模糊匹配——
+        ``Source.name`` 是「国网北京市电力公司」这种，让人去记 ``sgcc_bj`` 并不合理。
+        """
         stmt = self._base_select()
         conds = []
-        if province_code:
-            conds.append(Source.province_code == province_code)
+        if province_codes:
+            conds.append(Source.province_code.in_(tuple(province_codes)))
         if category:
             conds.append(Source.category == category)
         if enabled is not None:
             conds.append(Source.enabled == enabled)
+        if keyword:
+            like = f"%{escape_like(keyword)}%"
+            conds.append(
+                or_(
+                    Source.name.like(like, escape="\\"),
+                    Source.adapter_name.like(like, escape="\\"),
+                    Source.source_id.like(like, escape="\\"),
+                )
+            )
         stmt = stmt.where(*conds).order_by(
             Source.priority.asc(), Source.province_code.asc(), Source.id.asc()
         )
@@ -262,7 +277,7 @@ class ProvinceRepository(BaseRepository):
     @staticmethod
     def utcnow() -> datetime:
         """统一的 UTC naive 时间（与库内 ``*_utc`` 字段同型）。"""
-        return datetime.now(timezone.utc).replace(tzinfo=None)
+        return datetime.now(UTC).replace(tzinfo=None)
 
 
 def empty_page(page: int, page_size: int) -> Page:

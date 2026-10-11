@@ -7,14 +7,34 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence, TypeVar
+from collections.abc import Sequence
+from typing import Any, TypeVar
 
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-__all__ = ["BaseRepository", "Page"]
+__all__ = ["BaseRepository", "Page", "escape_like"]
 
 T = TypeVar("T")
+
+
+def escape_like(value: str) -> str:
+    """转义 ``LIKE`` 模式里的通配符，返回可直接包进 ``%...%`` 的字面量。
+
+    为什么必须转义
+    --------------
+    ``LIKE`` 里的 ``%`` 和 ``_`` 是通配符。用户搜「100%新能源」时，
+    未转义的 ``%`` 会变成「任意字符」——看起来搜到了，其实匹配的是别的东西；
+    搜 ``a_b`` 也会连带匹配到 ``axb``。参数化查询能防注入，但**防不住通配符语义**。
+
+    反斜杠本身也要转义，且必须**最先**替换，否则后面补进去的转义符会被二次转义。
+    """
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
 
 
 class Page:

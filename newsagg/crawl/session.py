@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import threading
-import time
 from typing import Any
 
 from newsagg.cleaning import now_utc_naive

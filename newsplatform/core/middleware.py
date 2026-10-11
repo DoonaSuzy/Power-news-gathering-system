@@ -22,7 +22,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.types import ASGIApp
 
-from newsplatform.core.context import RequestContext, REQUEST_ID_HEADER, reset_context, set_context
+from newsplatform.core.context import REQUEST_ID_HEADER, RequestContext, reset_context, set_context
 from newsplatform.core.logging import bind_log_context, clear_log_context, get_logger
 
 log = get_logger("access")

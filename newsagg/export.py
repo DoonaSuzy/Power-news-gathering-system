@@ -11,9 +11,10 @@
 from __future__ import annotations
 
 import csv
+from collections.abc import Iterator
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from newsagg.cleaning import csv_cell
 from newsagg.db import Database

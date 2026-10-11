@@ -18,7 +18,7 @@ import subprocess
 import sys
 import time
 
-from newsagg.classify import ACK, RUN, WAIT, classify_delivery
+from newsagg.classify import ACK, WAIT, classify_delivery
 from newsagg.config import get_settings
 from newsagg.db import Database
 from newsagg.errors import PowerNewsError

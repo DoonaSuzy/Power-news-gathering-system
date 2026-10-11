@@ -23,13 +23,13 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from sqlalchemy import (
+    CHAR,
+    JSON,
     BigInteger,
     Boolean,
-    CHAR,
     DateTime,
     Index,
     Integer,
-    JSON,
     SmallInteger,
     String,
     Text,

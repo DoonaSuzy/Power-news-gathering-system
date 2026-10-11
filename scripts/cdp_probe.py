@@ -6,13 +6,13 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 
 import httpx
 import websocket  # type: ignore
 
-import os
 CDP = os.environ.get("CDP_URL", "http://127.0.0.1:9222")
 
 

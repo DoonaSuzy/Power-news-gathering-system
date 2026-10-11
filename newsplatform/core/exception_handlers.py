@@ -17,6 +17,7 @@ from __future__ import annotations
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import DataError, IntegrityError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from newsplatform.core.config import get_platform_settings
@@ -59,6 +60,34 @@ def register_exception_handlers(app: FastAPI) -> None:
         for key, value in (exc.headers or {}).items():
             response.headers[key] = value
         return response
+
+    @app.exception_handler(DataError)
+    async def _data_error(request: Request, exc: DataError) -> JSONResponse:
+        """Pydantic 放行、但数据库列装不下的入参 → 422 而不是 500。
+
+        这类错误「看起来像服务端故障」（SQLAlchemy 抛 DataError、日志里是完整
+        堆栈），本质却是**客户端给了非法值**，只是校验边界没对齐 DDL 的列类型。
+        例如 ``sources.crawl_interval_hours`` 是 ``TINYINT``（上限 127），
+        接口曾放行到 168，MySQL 便报 ``1264 Out of range value``。
+
+        单独处理它是为了：
+        1. 客户端拿到 **4xx**（可自助修正），而不是会触发重试/告警的 5xx；
+        2. 错误码稳定为 1002，便于前端区分「参数越界」与「服务端异常」。
+
+        对外文案不带上库名/列名，细节只进日志。
+        """
+        log.exception("数据越界: %s %s", request.method, request.url.path)
+        settings = get_platform_settings()
+        detail = "数据超出字段允许范围" if not settings.debug else f"{type(exc).__name__}: {exc}"
+        return JSONResponse(status_code=422, content=fail(1002, detail))
+
+    @app.exception_handler(IntegrityError)
+    async def _integrity_error(request: Request, exc: IntegrityError) -> JSONResponse:
+        """唯一键 / 外键冲突 → 409，而不是 500。"""
+        log.exception("完整性约束冲突: %s %s", request.method, request.url.path)
+        settings = get_platform_settings()
+        detail = "数据约束冲突（唯一键或外键）" if not settings.debug else f"{type(exc).__name__}: {exc}"
+        return JSONResponse(status_code=409, content=fail(4001, detail))
 
     @app.exception_handler(RequestValidationError)
     async def _validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:

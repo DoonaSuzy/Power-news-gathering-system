@@ -17,14 +17,13 @@ import argparse
 import sys
 from datetime import datetime, timedelta
 
-from newsagg.cleaning import now_cst, now_utc_naive, to_utc_naive
+from newsagg.cleaning import now_cst, now_utc_naive
 from newsagg.config import get_settings
 from newsagg.db import Database
 from newsagg.logutil import bind_context, get_logger
 from newsagg.queue import StreamQueue
 from newsagg.repo import Repository
 from newsagg.timewindow import JOB_FULL_RESCAN, JOB_INCREMENTAL, build_window
-from newsagg.timewindow import window_key
 
 log = get_logger("schedule")
 
