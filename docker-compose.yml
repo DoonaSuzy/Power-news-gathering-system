@@ -9,9 +9,16 @@
 #    DSN 在本文件里用「用户/口令/库名」三段拼出来，主机名固定为服务名 mysql——
 #    这样 .env 只需维护一份口令，且容器网络与本机开发互不干扰。
 # 2) 一个镜像三种角色：fastapi 用 Dockerfile 的 CMD，scheduler / worker
-#    各自覆盖 command。scrapy + sqlalchemy 装三份是浪费，内存只有 ~3.8G。
+#    各自覆盖 command。三个服务共用同一条 build 与同一个 tag，否则 scrapy +
+#    sqlalchemy 会被打成三份 ~700MB 镜像标签（VM 磁盘只有 40G）。
 # 3) 宿主机 8000 端口已被同机的 newsagg-fastapi 占用，中台对外走 8080。
 name: power-news
+
+x-app-build: &app-build
+  context: .
+  dockerfile: newsplatform/Dockerfile
+
+x-app-image: &app-image power-news/app:local
 
 x-app-env: &app-env
   POWERNEWS_MYSQL_HOST: mysql
@@ -77,9 +84,8 @@ services:
     networks: [power-net]
 
   fastapi:
-    build:
-      context: .
-      dockerfile: newsplatform/Dockerfile
+    build: *app-build
+    image: *app-image
     container_name: power-fastapi
     restart: unless-stopped
     env_file:
@@ -96,9 +102,8 @@ services:
     networks: [power-net]
 
   scheduler:
-    build:
-      context: .
-      dockerfile: newsplatform/Dockerfile
+    build: *app-build
+    image: *app-image
     container_name: power-scheduler
     restart: unless-stopped
     # --loop 才是常驻守护；不带它 schedule 只跑一轮就退出，
@@ -116,9 +121,8 @@ services:
     networks: [power-net]
 
   worker:
-    build:
-      context: .
-      dockerfile: newsplatform/Dockerfile
+    build: *app-build
+    image: *app-image
     container_name: power-worker
     restart: unless-stopped
     # supervisor 起 POWERNEWS_WORKER_COUNT 个子进程并负责重启
