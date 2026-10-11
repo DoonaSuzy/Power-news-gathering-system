@@ -202,8 +202,12 @@ def validate(frame: Any, spec: ValidationSpec) -> ValidationReport:
     bad = pd.Series(False, index=df.index)
     violations: list[Violation] = []
 
-    # 1) 时间戳缺失
-    null_ts = df["ts"].isna()
+    # 1) 时间戳缺失 / 无法解析
+    #    文本日期列（接口原样回传、逐行组装的 frame）做 diff() 会抛 TypeError，
+    #    取 min/max 去 date_range 会把字典序当时间轴：时间相关的三条规则统一用
+    #    解析后的序列，解析不出来的按空值计——校验器不该因为输入是文本日期而崩溃或误判。
+    stamps = pd.to_datetime(df["ts"], errors="coerce")
+    null_ts = df["ts"].isna() | stamps.isna()
     # 2) 数值缺失 / 非数值
     value = pd.to_numeric(df["value"], errors="coerce")
     null_value = value.isna()
@@ -254,7 +258,7 @@ def validate(frame: Any, spec: ValidationSpec) -> ValidationReport:
 
         # 5) 时间倒退：按**到达顺序**判，同地区内后一行不得早于前一行。
         if spec.check_monotonic and total > 1:
-            regress = df.groupby("region", sort=False)["ts"].diff() < pd.Timedelta(0)
+            regress = stamps.groupby(df["region"], sort=False).diff() < pd.Timedelta(0)
             regress = regress.fillna(False)
             if bool(regress.any()):
                 count = int(regress.sum())
@@ -276,8 +280,8 @@ def validate(frame: Any, spec: ValidationSpec) -> ValidationReport:
 
     # 7) 时间轴缺口（warning）
     if spec.expected_freq and "region" in df.columns and total > 1:
-        wide = df.pivot_table(index="ts", columns="region", values="value", aggfunc="count")
-        grid = wide.reindex(pd.date_range(df["ts"].min(), df["ts"].max(), freq=spec.expected_freq))
+        wide = df.assign(ts=stamps).pivot_table(index="ts", columns="region", values="value", aggfunc="count")
+        grid = wide.reindex(pd.date_range(stamps.min(), stamps.max(), freq=spec.expected_freq))
         gap_ratio = float(grid.isna().to_numpy().mean()) if grid.size else 0.0
         if gap_ratio > spec.max_gap_ratio:
             violations.append(

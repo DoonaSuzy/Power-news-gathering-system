@@ -201,7 +201,7 @@ class PowerDataClient:
 
     # ------------------------------------------------------------------ 元信息
     def categories(self) -> tuple[str, ...]:
-        """可查询的 11 类时序数据。"""
+        """可查询的 12 类时序数据。"""
         return categories()
 
     def regions(self) -> tuple[str, ...]:

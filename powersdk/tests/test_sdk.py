@@ -3,7 +3,7 @@
 覆盖简历口径的全部能力点：
 
 * 3 行代码用法返回正确的标准化 DataFrame；
-* 11 类时序数据全部可查、4 种时间粒度、跨粒度数值一致性；
+* 12 类时序数据全部可查、4 种时间粒度、跨粒度数值一致性；
 * 20+ 气象参数插值方法映射表 + 解析兜底 + 各方法正确性；
 * JSON 解析（多种结构/中英文列别名）+ 时间戳自动补全 + 时区归一；
 * 数据校验准确率 ≥ 0.998（干净种子数据）与脏数据告警；
@@ -77,6 +77,7 @@ from powersdk.timeseries import (
     CATEGORY_REGISTRY,
     GRANULARITIES,
     WEATHER_PARAMS,
+    resolve_category,
     resolve_granularity,
 )
 
@@ -126,11 +127,11 @@ def test_three_line_usage_returns_standard_frame():
     assert client.alerts == ()
 
 
-def test_all_11_categories_queryable(client):
-    """11 类时序数据全部可查，且输出结构一致、准确率达标。"""
+def test_all_categories_queryable(client):
+    """12 类时序数据全部可查，且输出结构一致、准确率达标。"""
     names = categories()
-    assert len(names) == 11
-    assert len(set(names)) == 11
+    assert len(names) == 12
+    assert len(set(names)) == 12
     assert set(Category) == {Category(name) for name in names}
 
     for name in names:
@@ -435,6 +436,22 @@ def test_validation_detects_timestamp_regression_in_arrival_order():
     assert report.accuracy < 1.0
     # 同一份数据按时间排好序再校验，就不该报倒退
     assert validate(frame.sort_values("ts").reset_index(drop=True), spec).codes == ()
+
+
+def test_validation_parses_text_timestamps_instead_of_crashing():
+    """文本日期列：能解析就照常判，解析不了的按空值扣分，不抛 TypeError。"""
+    spec = ValidationSpec(value_min=0.0, value_max=100.0, name="probe")
+    frame = pd.DataFrame(
+        {
+            "ts": ["2025-01-01 02:00:00", "2025-01-01 01:00:00", "明天"],
+            "region": ["广东", "广东", "广东"],
+            "value": [10.0, 20.0, 30.0],
+        }
+    )
+
+    report = validate(frame, spec)
+    assert set(report.codes) == {"null_value", "non_monotonic"}
+    assert report.valid_rows == 1  # 只有首行既解析得了又没倒退
 
 
 def test_client_alerts_when_source_is_dirty():
@@ -1047,9 +1064,42 @@ def test_mysql_source_market_uses_bound_dataset_and_grade():
     assert params[0] == "ceci_import" and params[1] == "CN" and params[2] == "到岸标煤单价"
 
 
+def test_new_lng_category_needs_only_three_declarations():
+    """新增一类时序数据 = 枚举成员 + 画像 + 落点三处声明，取数/校验/粒度全复用。
+
+    这既是「配置与逻辑解耦」的回归锚点，也是简历里「新增接口 2 小时」的度量对象：
+    只要这条用例需要改动除注册表/落点表以外的代码，就说明管线里还藏着按类别写死的分支。
+    """
+    assert resolve_category("气价") is Category.LNG_PRICE
+    binding = CATEGORY_BINDINGS["lng_price"]
+    assert (binding.kind, binding.dataset, binding.default_grade) == ("market", "lng_spot", "CLP")
+
+    connection = FakeConnection(
+        [
+            (
+                "market_prices",
+                [("2026-10-08", "广东", 6010.0, "元/吨"), ("2026-10-09", "广东", 5980.0, "元/吨")],
+            )
+        ]
+    )
+    source = MySQLTimeSeriesSource(connection=connection)
+    frame = source.fetch("lng_price", region="广东", start="2026-10-01", end="2026-10-31")
+    _sql, params = connection.executed[0]
+    assert params[:3] == ("lng_spot", "广东", "CLP")
+
+    spec = spec_for_category("气价")
+    assert (spec.value_min, spec.value_max, spec.unit) == (0.0, 30000.0, "元/吨")
+    report = validate(frame, spec)
+    assert report.codes == () and report.accuracy == 1.0
+    # param 换口径不换类别：同一张表里 CLP 与「生意社基准价」是两条序列
+    connection.executed.clear()
+    source.fetch("lng_price", region="广东", param="生意社基准价")
+    assert connection.executed[0][1][2] == "生意社基准价"
+
+
 def test_mysql_source_refuses_to_fabricate_unbacked_categories():
     """负荷/风光水/用电量……库里没有，必须报错而不是返回合成曲线或空表。"""
-    assert backed_categories() == ("weather", "electricity_price", "coal_price")
+    assert backed_categories() == ("weather", "electricity_price", "coal_price", "lng_price")
     assert "load" in unbacked_categories()
 
     source = MySQLTimeSeriesSource(connection=FakeConnection([]))
@@ -1097,7 +1147,7 @@ def test_mysql_source_is_cursor_class_agnostic():
 
 
 def test_category_bindings_are_the_single_source_of_truth():
-    """11 类都要在落点表里有格子，行情类必须钉死默认口径。
+    """12 类都要在落点表里有格子，行情类必须钉死默认口径。
 
     ``market_prices`` 同一个 (region, price_date) 有多条 grade 行，
     dataset 或 default_grade 少一个，取数就会把不同口径平均在一起——
@@ -1405,6 +1455,6 @@ def test_public_api_exports():
     assert powersdk.__version__
     for name in powersdk.__all__:
         assert hasattr(powersdk, name), name
-    assert len(categories()) == 11
+    assert len(categories()) == 12
     assert len(GRANULARITIES) == 4
     assert isinstance(InMemoryTimeSeriesSource(seed=SEED), powersdk.TimeSeriesSource)

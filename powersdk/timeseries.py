@@ -1,9 +1,9 @@
-"""11 类时序数据的类别注册表与数据源抽象。
+"""12 类时序数据的类别注册表与数据源抽象。
 
 模块内容
 --------
-* :class:`Category` —— 11 类时序数据枚举（天气、电价、负荷、新能源出力、风电、
-  光伏、水电、煤价、用电量、电力缺口、预测）；
+* :class:`Category` —— 12 类时序数据枚举（天气、电价、负荷、新能源出力、风电、
+  光伏、水电、煤价、气价、用电量、电力缺口、预测）；
 * :data:`CATEGORY_REGISTRY` —— 每类的单位、量级、取值范围、日周期形状、默认
   插值参数、中文别名（**配置化**，新增类别只改这张表）；
 * :data:`WEATHER_PARAMS` —— 18 个气象参数的取值画像；
@@ -118,7 +118,7 @@ DEFAULT_REGIONS: tuple[str, ...] = tuple(name for _code, name in PROVINCES)
 
 
 class Category(StrEnum):
-    """11 类时序数据类别。"""
+    """12 类时序数据类别。"""
 
     WEATHER = "weather"
     ELECTRICITY_PRICE = "electricity_price"
@@ -128,6 +128,7 @@ class Category(StrEnum):
     SOLAR_POWER = "solar_power"
     HYDRO_POWER = "hydro_power"
     COAL_PRICE = "coal_price"
+    LNG_PRICE = "lng_price"
     CONSUMPTION = "consumption"
     SUPPLY_GAP = "supply_gap"
     FORECAST = "forecast"
@@ -173,7 +174,7 @@ class WeatherParamSpec:
     description: str = ""
 
 
-#: 11 类时序数据注册表
+#: 12 类时序数据注册表
 CATEGORY_REGISTRY: dict[str, CategorySpec] = {
     spec.value: spec
     for spec in (
@@ -224,6 +225,12 @@ CATEGORY_REGISTRY: dict[str, CategorySpec] = {
             shape="flat",
             description="动力煤价格",
             aliases=("煤价", "动力煤价格", "煤炭价格"),
+        ),
+        CategorySpec(
+            value="lng_price", unit="元/吨", level=6000.0, noise=0.05, minimum=0.0, maximum=30000.0,
+            shape="flat",
+            description="液化天然气（LNG）市场价格",
+            aliases=("气价", "天然气", "天然气价格", "液化天然气", "lng", "lng价格"),
         ),
         CategorySpec(
             value="consumption", unit="亿kWh", level=65.0, noise=0.05, minimum=5.0, maximum=400.0,
@@ -435,7 +442,7 @@ class SourceBinding:
     note: str = ""
 
 
-#: 11 类 → 真实库落点。``None`` 表示**目前没有这份数据**。
+#: 12 类 → 真实库落点。``None`` 表示**目前没有这份数据**。
 #:
 #: 这不是偷懒的占位，而是把「哪些类别真的有数」写成一处可审的表：
 #: 负荷/风电/光伏/水电/用电量/缺口/预测目前没有任何采集器在写，
@@ -458,6 +465,12 @@ CATEGORY_BINDINGS: dict[str, SourceBinding | None] = {
         dataset="ceci_import",
         default_grade="到岸标煤单价",
         note="中国电煤采购价格指数（进口到岸标煤单价）",
+    ),
+    Category.LNG_PRICE.value: SourceBinding(
+        "market",
+        dataset="lng_spot",
+        default_grade="CLP",
+        note="LNG 市场价格（默认 CLP 口径，可用 param 指定 grade，如「生意社基准价」）",
     ),
     Category.LOAD.value: None,
     Category.NEW_ENERGY_OUTPUT.value: None,
@@ -512,7 +525,7 @@ for _spec in CATEGORY_REGISTRY.values():
 
 
 def categories() -> tuple[str, ...]:
-    """返回 11 类时序数据的规范名（注册表顺序）。"""
+    """返回 12 类时序数据的规范名（注册表顺序）。"""
     return tuple(CATEGORY_REGISTRY)
 
 
