@@ -119,7 +119,10 @@ class HttpTimeSeriesSource:
     def _url(self, path: str, params: dict[str, object]) -> str:
         query = {k: v for k, v in params.items() if v not in (None, "")}
         encoded = urllib.parse.urlencode(query, doseq=True)
-        return f"{self.base_url}{path}?{encoded}" if encoded else f"{self.base_url}{path}"
+        # 大区名是中文（"/weather/华北/..."），而 http.client 用 latin-1 写请求行，
+        # 非 ASCII 直接 UnicodeEncodeError。离线 transport= 绕过了这一步，只有真请求才炸。
+        tail = urllib.parse.quote(path, safe="/")
+        return f"{self.base_url}{tail}?{encoded}" if encoded else f"{self.base_url}{tail}"
 
     def _get(self, path: str, params: dict[str, object]) -> dict:
         """一次 GET，拆掉统一响应信封，只返回 ``data``。

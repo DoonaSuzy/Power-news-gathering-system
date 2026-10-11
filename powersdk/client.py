@@ -191,6 +191,11 @@ class PowerDataClient:
         因为真实库里目前根本没有负荷采集器。
         """
         info: dict[str, Any] = {"env": self.settings.env, "settings": self.settings.as_dict()}
+        # settings 里的 api_token 来自环境变量；HTTP 源也可以自己带 token。
+        # 只看前者会让自检说「没配 Token」而实际请求正在发 Bearer——排查鉴权时
+        # 这是最误导人的一种报告。这里只纠正「有没有」，值仍然脱敏。
+        if getattr(self.source, "token", ""):
+            info["settings"]["api_token"] = "***"
         info["source"] = type(self.source).__name__
         info["backed_categories"] = backed_categories()
         try:

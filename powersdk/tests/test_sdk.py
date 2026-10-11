@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+import urllib.parse
 from datetime import date, datetime
 
 import numpy as np
@@ -1017,6 +1018,11 @@ class Recorder:
     所以这里也必须「命中路由才有数」：若所有路径都吐同一页，
     用例里就会出现 8 倍重复行，长表形状是否唯一就测不出来了。
     队列取完后返回空信封。
+
+    path 里的中文大区名在真实请求里必须 percent 编码（``http.client`` 只接受
+    ASCII 请求行），所以路由匹配前先把 path 段 unquote 回来，用例继续用中文
+    needle 断言「问的是哪个大区」。URL 是否真的 ASCII 安全由
+    :func:`test_http_source_urls_are_ascii_request_lines` 单独守。
     """
 
     def __init__(self, routes=()):
@@ -1025,8 +1031,9 @@ class Recorder:
 
     def __call__(self, url, headers):
         self.calls.append((url, headers))
+        probe = urllib.parse.unquote(url.partition("?")[0])
         for needle, script in self.routes:
-            if needle in url and script:
+            if needle in probe and script:
                 return script.pop(0)
         return _envelope([])
 
@@ -1060,6 +1067,28 @@ def test_http_source_requests_province_level_from_api():
     assert "since=2025-01-01+00%3A00%3A00" in url
     assert "until=2025-01-01+23%3A59%3A59" in url
     assert headers["Authorization"] == "Bearer pk_test"
+
+
+def test_http_source_percent_encodes_non_ascii_region_path():
+    """中文大区名必须 percent 编码后才发出——这是离线 transport= 测不到的一层。
+
+    ``http.client`` 用 latin-1 写请求行，路径里留一个「华北」就在真实请求上抛
+    UnicodeEncodeError；注入假 transport 的用例绕开了这一步，曾让 38 个用例全绿
+    的 SDK 一连真中台就崩。所以这里断言的是「URL 本身可 ASCII」，而非返回值。
+    """
+    recorder = Recorder([("华北", [_envelope([], {"limit": 5000})])])
+    source = HttpTimeSeriesSource(base_url="http://x/api/v1", transport=recorder)
+    source.fetch("weather", region="河北")
+
+    assert recorder.calls
+    for url, _headers in recorder.calls:
+        assert url.isascii(), url
+    huabei = urllib.parse.quote("华北")
+    hit = [u for u, _ in recorder.calls if f"/weather/{huabei}/" in u]
+    assert len(hit) == 1
+    # 编码只作用于 path 段；query 仍由 urlencode 负责，二者互不转义
+    path = urllib.parse.unquote(hit[0].partition("?")[0])
+    assert path == "http://x/api/v1/weather/华北/hist_rt"
 
 
 def test_http_source_paginates_until_short_page():
@@ -1139,6 +1168,34 @@ def test_http_source_surfaces_server_errors_loudly():
 
     with pytest.raises(UnsupportedCategoryError, match="HTTP"):
         HttpTimeSeriesSource(base_url="http://x/api/v1", transport=silent).fetch("load")
+
+
+def test_healthcheck_reports_token_presence_without_printing_it():
+    """自检要说清「现在到底带没带凭证」，但永远不印出值。
+
+    ``settings.api_token`` 只反映环境变量，源可以另带 token；只看前者会报出
+    「没配 Token」的假象。反过来，把值印进日志等于把钥匙发给日志系统。
+    """
+    secret = "pk_live_super_secret"
+    client = PowerDataClient(
+        env="test",
+        source=HttpTimeSeriesSource(
+            base_url="http://x/api/v1", token=secret, transport=Recorder()
+        ),
+    )
+    health = client.healthcheck()
+    assert health["settings"]["api_token"] == "***"
+    assert "mysql_password" not in health["settings"]
+    assert secret not in json.dumps(health, ensure_ascii=False)
+
+    # 环境变量里的 token 同样只露 "***"
+    masked = Settings.for_env("test", api_token=secret).as_dict()
+    assert masked["api_token"] == "***"
+    assert secret not in json.dumps(masked, ensure_ascii=False)
+
+    # 内存源没有 token 概念，自检保持「没配」而不是误报有
+    plain = PowerDataClient(env="test", source=InMemoryTimeSeriesSource(seed=SEED, hours=3))
+    assert plain.healthcheck()["settings"]["api_token"] == ""
 
 
 def test_http_and_mysql_sources_agree_on_shape():
