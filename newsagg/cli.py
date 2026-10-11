@@ -374,6 +374,7 @@ def cmd_crawl_once(args: argparse.Namespace) -> int:
 
     conn = db.connect()
     job_ids: list[int] = []
+    planned = 0
     try:
         sources = repo.list_sources(conn, enabled_only=not args.include_disabled)
         wanted = set(args.source or [])
@@ -396,6 +397,12 @@ def cmd_crawl_once(args: argparse.Namespace) -> int:
                 now_utc_naive=now_utc,
                 window_days=window_days,
             )
+            if args.dry_run:
+                # 手工建批的 trigger_key 带秒级时间戳，本来就不会撞唯一键，
+                # 所以 dry-run 不必真插一行才能知道结果——写下去就不叫试运行了。
+                _out(f"  将建批 {src.adapter_name:<16} {window.describe()}")
+                planned += 1
+                continue
             job_id = repo.create_job(
                 conn,
                 source_id=src.id,
@@ -412,12 +419,12 @@ def cmd_crawl_once(args: argparse.Namespace) -> int:
     finally:
         conn.close()
 
-    if not job_ids:
-        _out("未新建任务（trigger_key 冲突或无可用来源）。")
+    if args.dry_run:
+        _out(f"[dry-run] 共 {planned} 个来源可建批，未写库、不投递、不执行。")
         return 0
 
-    if args.dry_run:
-        _out(f"[dry-run] 共建批 {len(job_ids)} 条，不投递、不执行。")
+    if not job_ids:
+        _out("未新建任务（trigger_key 冲突或无可用来源）。")
         return 0
 
     if args.exec:
