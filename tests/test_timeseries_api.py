@@ -292,6 +292,11 @@ def test_service_attaches_daily_basis_only_for_daily_rows():
     assert hourly["meta"]["daily_basis"] == {}
     assert daily["meta"]["daily_basis"]["shortwave_radiation"] == "日累计（MJ/m²）"
     assert "风速加权" in daily["meta"]["daily_basis"]["wind_direction_10m"]
+    # 口径说明对了还不够：units 仍写 W/m² 时，同一列同时带着两个互斥的单位，
+    # 按 meta.units 换算的调用方会把 14.7 MJ 当成 14.7 W 用（差两个数量级）。
+    assert hourly["meta"]["units"]["shortwave_radiation"] == "W/m²"
+    assert daily["meta"]["units"]["shortwave_radiation"] == "MJ/m²"
+    assert daily["meta"]["units"]["wind_direction_10m"] == "°"
 
 
 def test_service_marks_province_basis_and_avoids_station_daily_confusion():

@@ -183,6 +183,20 @@ DAILY_AGG_LABEL: dict[str, str] = {
     "weather_code": "日最严重（逐时最大值）",
 }
 
+#: 逐日行里量纲**变了**的列 → 日粒度单位。
+#: 只有辐照这一列：日行存的是「当日累计 MJ/m²」，沿用逐时的 W/m² 等于
+#: 给一个差了 ×24/3600 量级的数字贴错标签。API 的 ``meta.units`` 与 SDK
+#: 返回的 ``unit`` 都从这里取值，避免两处各写一份。
+DAILY_UNIT_OVERRIDES: dict[str, str] = {"shortwave_radiation": "MJ/m²"}
+
+
+def unit_for(column: str, granularity: str) -> str:
+    """列在某粒度下的单位；逐日仅辐照换算纲，其余与逐时同名。"""
+    if granularity == "daily":
+        return DAILY_UNIT_OVERRIDES.get(column, VARIABLE_UNIT[column])
+    return VARIABLE_UNIT[column]
+
+
 #: 允许的粒度值，与建表时的 ``ENUM`` 必须逐字一致。
 GRANULARITIES: tuple[str, ...] = ("hourly", "daily")
 

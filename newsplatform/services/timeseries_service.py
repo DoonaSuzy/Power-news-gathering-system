@@ -25,6 +25,7 @@ from newsagg.weather.models import (
     REGION_CODES,
     VARIABLE_CN,
     VARIABLE_UNIT,
+    unit_for,
 )
 from newsplatform.core.exceptions import BadRequest
 from newsplatform.core.provinces import load_rows, resolve_codes
@@ -125,7 +126,9 @@ class TimeSeriesService:
                 "granularity": granularity,
                 "level": level,
                 "columns": list(columns),
-                "units": {c: VARIABLE_UNIT[c] for c in columns},
+                # 单位随粒度走：日行辐照是累计 MJ/m²，贴 W/m² 就是给错的量纲
+                # 盖一个合法标签，调用方按它换算会差两个数量级。
+                "units": {c: unit_for(c, granularity) for c in columns},
                 "labels": {c: VARIABLE_CN[c] for c in columns},
                 "daily_basis": (
                     {c: DAILY_AGG_LABEL[c] for c in columns} if granularity == "daily" else {}
