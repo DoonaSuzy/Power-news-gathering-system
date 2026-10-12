@@ -15,6 +15,7 @@ rule_files:
 
 scrape_configs:
   # FastAPI 数据中台：业务请求计数 / 延迟 / 采集等核心指标。
+  # 这是**唯一**的指标来源（newsplatform/core/metrics.py 定义的 6 个指标）。
   - job_name: power-fastapi
     metrics_path: /metrics
     static_configs:
@@ -22,11 +23,17 @@ scrape_configs:
         labels:
           service: fastapi
 
-  # 采集 worker：需在 worker 进程内通过 prometheus_client.start_http_server(8000)
-  # 暴露 /metrics（见部署说明）。此处按服务名抓取同一端口。
-  - job_name: power-worker
-    metrics_path: /metrics
+  # Prometheus 自身：用于在看板上确认「监控链路本身是活的」。
+  # 没有它的话，一旦抓取失败，看板会和「业务没数据」长得一样，难以区分。
+  - job_name: prometheus
     static_configs:
-      - targets: ["worker:8000"]
-        labels:
-          service: worker
+      - targets: ["localhost:9090"]
+
+# ⚠️ 这里曾有一个抓 worker:8000/metrics 的 job，注释写着
+#    「需在 worker 进程内通过 prometheus_client.start_http_server(8000) 暴露」——
+#    但**该能力从未实现**，worker 是 CLI 进程、不监听任何端口，
+#    于是该 target 永远是 down，看板上多一条无意义的红色。
+#    （同一个根因也曾让 scheduler/worker 容器显示 unhealthy，已在 compose 里
+#     用 healthcheck.disable 修掉。）
+#    如果将来真需要 worker 指标，正确做法是在 newsagg/worker.py 里
+#    调用 prometheus_client.start_http_server(8000)，**并确认端口不与其它服务冲突**。
