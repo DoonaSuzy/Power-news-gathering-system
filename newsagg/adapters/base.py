@@ -105,6 +105,16 @@ class BaseAdapter(ABC):
     column_url: str = ""
     #: 同站其他栏目页（多入口，提升覆盖）
     extra_column_urls: tuple[str, ...] = ()
+    #: 该来源的**候选列表页**（按优先级，靠前的先试）。
+    #:
+    #: 为什么需要它：站群改版会让 `list_url` 静默失效 ——
+    #: 江苏 `sgcc_js` 的声明路径 `/p1/` 实测返回 **404**，
+    #: 改用 `/xwzx/` 后成功入库 **40 篇**；辽宁等站同理。
+    #: 这里列出的地址会被 spider 依次尝试，首个能解析出条目的胜出。
+    #:
+    #: 与 ``extra_column_urls`` 的区别：后者是**并列的多栏目**（都要抓），
+    #: 本字段是**同一栏目的备选路径**（互斥，只取第一个可用的）。
+    candidate_list_urls: tuple[str, ...] = ()
     #: 单来源请求间隔（秒）；敏感站覆写为 5
     request_interval: float = 0.0
     #: 该来源专用 TLS 套件（OpenSSL 语法）；None 表示用默认

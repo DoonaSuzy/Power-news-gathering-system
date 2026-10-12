@@ -82,6 +82,38 @@ class SgccGenericAdapter(HeuristicAdapter):
     #: 覆盖 URL 判定
     article_pattern = SGCC_ARTICLE_HINT
 
+    @property
+    def candidate_list_urls(self) -> tuple[str, ...]:
+        """电网站群的**候选栏目路径**（按优先级）。
+
+        为什么需要：站群有两套 CMS 并存（见 ``docs/省份攻克日志/README.md`` §1.3），
+        且**栏目路径会随改版失效** —— 实测到的两个典型：
+
+        * 江苏 ``sgcc_js``：声明 ``/p1/`` 返回 **404**，改用 ``/xwzx/`` 后入库 **40 篇**
+        * 辽宁 ``sgcc_ln``：栏目路径失效，需多路径备选
+
+        因此这里按「新版站群优先」的顺序给出备选，由 spider 的 errback 链
+        逐个尝试（互斥，不是全发 —— 同时发会重复采集同一批文章）。
+
+        Returns:
+            候选 URL 元组，**不含** ``list_url`` 本身（spider 会排除）。
+
+        Note:
+            用 property 而非类属性：候选要从 ``allowed_hosts`` 动态拼出来，
+            27 个子类不可能各写一遍。
+        """
+        hosts = getattr(self, "allowed_hosts", ()) or ()
+        if not hosts:
+            return ()
+        # 用 http:// 而非 https:// —— 国网站群 HTTPS 多被阻断（README §1.3 第二坑），
+        # 直接给可用的那个，省掉一次必然失败的尝试。
+        base = f"http://{hosts[0]}"
+        return (
+            f"{base}/xwzx/",   # 新版站群入口
+            f"{base}/p1/",     # 旧版站群入口
+            f"{base}/",        # 兜底：首页也能列出部分要闻
+        )
+
     #: 站点可能需要调整的选择器（子类按需覆写）
     body_selectors = (
         "div.TRS_Editor", "div#content", "div.content", "div.article-content",

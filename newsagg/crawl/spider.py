@@ -28,6 +28,11 @@ from newsagg.cleaning import (
     to_utc_naive,
 )
 from newsagg.crawl.mimetypes import is_non_text_page
+from newsagg.crawl.netpolicy import (
+    classify_block,
+    protocol_fallbacks,
+    strip_proxy_env,
+)
 from newsagg.crawl.sampler import Sampler
 from newsagg.crawl.session import CrawlSession
 from newsagg.logutil import bind_context, get_logger
@@ -73,6 +78,12 @@ class SiteSpider(scrapy.Spider):
         # 原始响应落盘层（默认关闭，用 POWERNEWS_KEEP_RAW=true 打开）。
         # 它解决的是「改解析规则必须重抓」—— 存了原文就能重洗。
         self.raw = raw_store_for(session.adapter_name)
+        # 清代理环境变量：沙箱/系统代理会劫持 TLS 握手，让国网 HTTPS 直接 ConnectError
+        # （docs/省份攻克日志/README.md §1.3 记录的第一个坑）。
+        # 只清 http(s)_proxy，不动 no_proxy —— 内网直连依赖后者。
+        removed = strip_proxy_env()
+        if removed:
+            log.info("已清理代理环境变量: %s", ", ".join(removed))
         self._visited_pages: set[str] = set()
 
     # ------------------------------ 入口 ------------------------------
@@ -83,6 +94,28 @@ class SiteSpider(scrapy.Spider):
             if extra and extra not in urls:
                 urls.append(extra)
         return urls
+
+    def _list_alt_urls(self) -> list[str]:
+        """主列表页的备选地址链（按尝试顺序）。
+
+        顺序：**同栏目的候选路径** → **协议降级**（https 不行试 http）。
+
+        为什么放在 errback 链而不是一次全发：候选路径是**互斥**的
+        （同一个栏目换个地址），同时发会重复采集同一批文章。
+        只有一个失败后才试下一个，首个能解析出条目的胜出。
+
+        Returns:
+            备选 URL 列表（不含主 URL 本身）。
+        """
+        alts: list[str] = []
+        for u in getattr(self.adapter, "candidate_list_urls", ()) or ():
+            if u and u != self.list_url and u not in alts:
+                alts.append(u)
+        # 协议降级：国网站群 HTTPS 被阻断、HTTP(80) 可通（README §1.3 第二坑）
+        for u in protocol_fallbacks(self.list_url):
+            if u != self.list_url and u not in alts:
+                alts.append(u)
+        return alts
 
     def _request(self, url: str, callback, **kwargs):  # noqa: ANN001
         """构造请求，统一带上来源与限速 meta。"""
@@ -100,12 +133,23 @@ class SiteSpider(scrapy.Spider):
     async def start(self):
         """Scrapy 2.13+ 的真实入口（必须是异步生成器）。"""
         for url in self._entry_urls():
-            yield self._request(url, self.parse_list)
+            # 只有主列表页挂备选链；扩展栏目（extra_column_urls）各自独立，
+            # 它们的失败不应触发主栏目的备选（那是另一套地址）。
+            alts = self._list_alt_urls() if url == self.list_url else []
+            # 扩展栏目自身也做协议降级，理由同上
+            if url != self.list_url:
+                alts = [u for u in protocol_fallbacks(url) if u != url]
+            yield self._request(url, self.parse_list,
+                                meta={"powernews_alt_urls": alts} if alts else None)
 
     def start_requests(self):
         """兼容旧式入口。"""
         for url in self._entry_urls():
-            yield self._request(url, self.parse_list)
+            alts = self._list_alt_urls() if url == self.list_url else []
+            if url != self.list_url:
+                alts = [u for u in protocol_fallbacks(url) if u != url]
+            yield self._request(url, self.parse_list,
+                                meta={"powernews_alt_urls": alts} if alts else None)
 
     # ------------------------------ 列表页 ------------------------------
     def parse_list(self, response):  # noqa: ANN001
@@ -276,17 +320,39 @@ class SiteSpider(scrapy.Spider):
         return self.session.budget_hit()
 
     def on_error(self, failure):  # noqa: ANN001
-        """请求失败：分类并写样本，不致命则跳过该条。"""
+        """请求失败：**先试备选地址**，再分类记录，不致命则跳过该条。"""
         from scrapy.spidermiddlewares.httperror import HttpError
 
         url = failure.request.url
-        nh = failure.request.meta.get("powernews_url_hash") or url_hash(url)
+        meta = failure.request.meta
+
+        # ---- 优先：列表页的备选地址链（候选路径 → 协议降级）----
+        # 放在最前是因为：站点改协议/改路径是最常见的失败原因，
+        # 且备选一试就可能成功，没必要先记一笔失败。
+        alts = list(meta.get("powernews_alt_urls") or [])
+        if alts:
+            nxt, rest = alts[0], alts[1:]
+            log.info("列表页失败，改用备选地址 %s -> %s", url, nxt)
+            # 只透传 powernews_* 前缀的 meta，避免把上一跳的噪声带下去
+            carry = {k: v for k, v in meta.items() if k.startswith("powernews_")}
+            carry["powernews_alt_urls"] = rest
+            return scrapy.Request(
+                nxt, callback=failure.request.callback, dont_filter=True,
+                meta=carry, errback=self.on_error,
+            )
+
+        nh = meta.get("powernews_url_hash") or url_hash(url)
         code = "unknown"
         if failure.check(HttpError) and getattr(failure.value, "response", None) is not None:
             status = failure.value.response.status
             code = f"http_{status}"
-            if status in (403, 405, 412, 429):
+            kind = classify_block(status)
+            if kind is not None:
+                # 阻断码语义不同：412(瑞数) 原样重试无用、403 多是路径级拒绝、
+                # 202 是风控排队。note_block 会按 block 计数触发冷却。
                 self.session.note_block(status)
+                log.warning("阻断 %s：%s（%s）", url, kind[0],
+                            "原样重试无意义" if not kind[1] else "可换路径/降频")
         elif failure.check(Exception):
             code = type(failure.value).__name__.lower()
         log.info("详情失败 %s: %s", url, code)
