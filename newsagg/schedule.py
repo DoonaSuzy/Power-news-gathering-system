@@ -19,6 +19,7 @@ from datetime import datetime, timedelta
 
 from newsagg.cleaning import now_cst, now_utc_naive
 from newsagg.config import get_settings
+from newsagg.cron import CronError, parse_cron
 from newsagg.db import Database
 from newsagg.logutil import bind_context, get_logger
 from newsagg.queue import StreamQueue
@@ -27,7 +28,7 @@ from newsagg.timewindow import JOB_FULL_RESCAN, JOB_INCREMENTAL, build_window
 
 log = get_logger("schedule")
 
-__all__ = ["run_coordinator", "build_triggers", "publish_jobs", "main"]
+__all__ = ["run_coordinator", "build_triggers", "cron_due", "publish_jobs", "main"]
 
 
 def build_triggers(now_utc: datetime | None = None) -> str:
@@ -39,6 +40,34 @@ def build_triggers(now_utc: datetime | None = None) -> str:
 
         cst = to_cst_naive(now_utc)
     return f"hourly:{cst:%Y%m%d%H}"
+
+
+def cron_due(expr: str, now_utc: datetime | None = None) -> bool:
+    """判断当前时刻是否命中 cron 表达式。
+
+    Args:
+        expr: 5 字段 cron 表达式；空串表示未启用 cron 模式。
+        now_utc: 当前 UTC 时间（默认取系统时间）。
+
+    Returns:
+        True 表示应触发。表达式非法时**返回 False 并记 error** ——
+        调度器不能因为一条配置写错就整体停摆，但必须留下可见的错误。
+
+    Note:
+        按 **CST（北京时间）** 匹配，与项目其它时间口径一致
+        （用户配「每天 08:00」指的是北京时间 08:00，不是 UTC）。
+    """
+    if not expr or not expr.strip():
+        return False
+    now_utc = now_utc or now_utc_naive()
+    try:
+        from newsagg.cleaning import to_cst_naive
+
+        cst = to_cst_naive(now_utc)
+        return parse_cron(expr).matches(cst)
+    except CronError as exc:
+        log.error("SCHEDULE_CRON 配置非法，本轮按间隔模式处理: %s", exc)
+        return False
 
 
 def publish_jobs(job_ids: list[int], meta: dict | None = None,
@@ -64,6 +93,16 @@ def run_coordinator(*, force: bool = False, dry_run: bool = False,
     repo = Repository(db)
     now_utc = now_utc or now_utc_naive()
     trigger = build_triggers(now_utc)
+
+    # cron 命中 → 本轮忽略「间隔小时」，全部来源强制建批。
+    # 两种模式是**叠加**关系：cron 命中 或 间隔到期，任一满足即建批。
+    cron_hit = cron_due(settings.schedule_cron, now_utc)
+    if cron_hit:
+        log.info("cron %s 命中，本轮强制建批", settings.schedule_cron)
+        force = True
+        # trigger_key 加 cron 前缀，避免与同小时的 hourly 批次**撞唯一键**
+        # （crawl_jobs 的 trigger_key 有唯一约束，撞了会静默建不出批）。
+        trigger = f"cron:{settings.schedule_cron}:{trigger}"
 
     conn = db.connect()
     job_ids: list[int] = []

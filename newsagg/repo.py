@@ -335,6 +335,20 @@ class Repository:
                 (reason, retry_minutes, job_id),
             )
 
+    def mark_job_failed(self, conn, *, job_id: int, reason: str) -> None:
+        """把任务标记为失败（**只改 status/stop_reason，不动计数列**）。
+
+        用于「重试额度耗尽」：此时计数列（discovered/saved/requests）
+        可能还是 0，用 ``finish_job`` 会把它们覆盖成传入值，丢失最后一次
+        实际产出的计数。所以这里刻意走轻量 UPDATE。
+        """
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE crawl_jobs SET status='failed', stop_reason=%s, "
+                "finished_at_utc=UTC_TIMESTAMP() WHERE id=%s",
+                (reason, job_id),
+            )
+
     # ================= 候选与文章 =================
     def upsert_discovered(self, conn, *, source_id: int, job_id: int,
                           url_hash: str, url: str, list_title: str = "") -> bool:

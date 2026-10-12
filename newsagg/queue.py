@@ -139,6 +139,33 @@ class StreamQueue:
         except Exception as exc:  # noqa: BLE001
             log.warning("XACK 失败 %s: %s", message_id, exc)
 
+    def delivery_count(self, message_id: str) -> int | None:
+        """查一条消息被投递过几次（即已重试几次）。
+
+        数据来自 Redis Stream 的 ``XPENDING``（``times_delivered``），
+        **不依赖数据库加列** —— 重试次数本就是队列的属性，
+        为它改 DDL 会把「队列关注点」泄漏到 schema 里。
+
+        Args:
+            message_id: Stream 消息 id。
+
+        Returns:
+            投递次数；消息已被 ack 或查询失败时返回 ``None``
+            （调用方应把 ``None`` 当作「无法判断」，而非 0）。
+        """
+        try:
+            pendings = self.client.xpending_range(
+                self.stream, self.group, min=message_id, max=message_id, count=1,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("XPENDING 失败 %s: %s", message_id, exc)
+            return None
+        for item in pendings or []:
+            mid = item.get("message_id") if isinstance(item, dict) else None
+            if mid is not None and str(mid) == message_id:
+                return int(item.get("times_delivered") or 0)
+        return None
+
     # ---------------- 运维 ----------------
     def stats(self) -> dict[str, Any]:
         """队列概览（积压 / 待处理 / 消费者）。"""

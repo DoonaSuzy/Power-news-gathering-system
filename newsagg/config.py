@@ -88,6 +88,17 @@ class Settings:
     worker_count: int = 4
     user_agent: str = "powernews/0.1 (educational local aggregator)"
 
+    # ---- 定时调度（cron + 重试）----
+    #: cron 表达式（5 字段：分 时 日 月 星期）。空 = 只用「间隔小时」模式。
+    #: 例："0 8 * * *" 每天 08:00；"0 */2 * * *" 每两小时。
+    #: 两种模式**同时生效**：cron 命中 或 间隔到期，任一满足即建批。
+    schedule_cron: str = ""
+    #: 单个 job 最大重试次数（超过则标记 failed，不再重认领）。
+    job_max_retries: int = 3
+    #: 重试的最小空闲间隔（毫秒）。消息空闲超过该值才被重认领 ——
+    #: 立即重试会对着同一个失败原因连打，既浪费又刷日志。
+    job_retry_min_idle_ms: int = 600_000
+
     # ---- 窗口 ----
     window_days: int = 7
     incremental_lookback_hours: int = 48
@@ -170,6 +181,9 @@ def get_settings() -> Settings:
         lease_seconds=_env_int("LEASE_SECONDS", 900),
         worker_count=_env_int("WORKER_COUNT", 4),
         user_agent=_env("USER_AGENT", "powernews/0.1 (educational local aggregator)"),
+        schedule_cron=_env("SCHEDULE_CRON", ""),
+        job_max_retries=_env_int("JOB_MAX_RETRIES", 3),
+        job_retry_min_idle_ms=_env_int("JOB_RETRY_MIN_IDLE_MS", 600_000),
         window_days=_env_int("WINDOW_DAYS", 7),
         incremental_lookback_hours=_env_int("INCREMENTAL_LOOKBACK_HOURS", 48),
         gne_fallback=_env_bool("GNE_FALLBACK", True),

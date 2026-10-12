@@ -56,8 +56,11 @@ def take_assignment(queue: StreamQueue, db: Database, owner: str) -> bool:
     messages = queue.take(consumer=owner, block_ms=5000, count=1)
 
     if not messages:
-        # 没有新消息时，认领其他 worker 崩溃后遗留的超时消息
-        messages = queue.reclaim_stale(consumer=owner, min_idle_ms=600_000, count=1)
+        # 没有新消息时，认领其他 worker 崩溃后遗留的超时消息。
+        # 间隔取配置（默认 10 分钟）—— 立即重试会对着同一个失败原因连打，
+        # 既浪费请求又刷日志；太长则故障恢复慢。10 分钟是两者折中。
+        min_idle_ms = get_settings().job_retry_min_idle_ms
+        messages = queue.reclaim_stale(consumer=owner, min_idle_ms=min_idle_ms, count=1)
         if not messages:
             return False
 
@@ -97,8 +100,34 @@ def take_assignment(queue: StreamQueue, db: Database, owner: str) -> bool:
     if _run_job_subprocess(job_id):
         queue.ack(message_id)
     else:
-        # 子进程失败：不 ack，留待 XAUTOCLAIM 重新认领
-        log.warning("job %s 子进程未成功，保留消息待重认领", job_id)
+        # 子进程失败：先看是否还有重试额度。
+        # 次数来自 Redis Stream 的 XPENDING（times_delivered）——
+        # **不依赖给 crawl_jobs 加 attempts 列**：重试次数本是队列的属性，
+        # 为它改 DDL 会把队列关注点泄漏到 schema。
+        max_retries = get_settings().job_max_retries
+        delivered = queue.delivery_count(message_id)
+        if delivered is not None and delivered >= max_retries:
+            log.warning(
+                "job %s 已重试 %s 次（上限 %s），标记失败不再重认领",
+                job_id, delivered, max_retries,
+            )
+            # 不标记的话，这条消息会永远留在 PEL 里被反复认领 ——
+            # 项目早期踩过：无上限重试导致同一条失败任务每 10 分钟被拉起来一次，
+            # 日志里全是重复错误，反而掩盖真正的问题。
+            repo = Repository(db)
+            conn = db.connect()
+            try:
+                repo.mark_job_failed(conn, job_id=job_id,
+                                     reason=f"retry_exhausted_{delivered}")
+                conn.commit()
+            finally:
+                conn.close()
+            queue.ack(message_id)
+        else:
+            log.warning(
+                "job %s 子进程未成功，保留待重认领（已投递 %s / 上限 %s）",
+                job_id, "?" if delivered is None else delivered, max_retries,
+            )
     # 释放日志上下文
     from newsagg.logutil import _LOG_CONTEXT
 
