@@ -113,6 +113,11 @@ services:
       - .env
     environment:
       <<: *app-env
+    # 关掉镜像里的 HEALTHCHECK —— 它是给 fastapi 写的（查 8000 的 /api/v1/health），
+    # 而 scheduler 是 CLI 进程、**不监听任何端口**，继承它只会永久 unhealthy。
+    # 一个镜像三种角色（fastapi/scheduler/worker）时，健康检查必须按角色覆盖。
+    healthcheck:
+      disable: true
     depends_on:
       mysql:
         condition: service_healthy
@@ -132,6 +137,9 @@ services:
     environment:
       <<: *app-env
       POWERNEWS_WORKER_COUNT: ${POWERNEWS_WORKER_COUNT:-2}
+    # 同 scheduler：CLI 进程不监听端口，关掉镜像里的 HTTP 健康检查
+    healthcheck:
+      disable: true
     depends_on:
       mysql:
         condition: service_healthy
@@ -168,6 +176,9 @@ services:
       - .env
     environment:
       <<: *app-env
+    # 同上：CLI 进程，关掉镜像里的 HTTP 健康检查
+    healthcheck:
+      disable: true
     depends_on:
       mysql:
         condition: service_healthy
