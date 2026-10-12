@@ -1,0 +1,202 @@
+/**
+ * 全局样式基座。
+ *
+ * 不引 UI 框架（Element Plus 之类压缩后也有 300KB+，而这个应用的全部交互
+ * 就是筛选、列表、抽屉、公告栏），用一组 CSS 变量统一视觉。
+ * 变量名按用途命名而不是按颜色命名，换主题时只改这一处。
+ */
+
+:root {
+  --c-bg: #f4f6fa;
+  --c-surface: #ffffff;
+  --c-surface-2: #fafbfd;
+  --c-border: #e2e8f0;
+  --c-border-strong: #cbd5e1;
+  --c-text: #1e293b;
+  --c-text-2: #475569;
+  /* slate-500：对比度 4.6:1，过 WCAG AA。原来是 #7c8798（3.64:1），
+     「来源/时间/」这类元信息虽然是小字，也不该低于正文标准。 */
+  --c-muted: #64748b;
+
+  --c-primary: #1d4ed8;
+  --c-primary-soft: #eef3ff;
+  --c-accent: #b45309;
+  --c-accent-soft: #fff7ed;
+  --c-danger: #b91c1c;
+  --c-danger-soft: #fef2f2;
+  --c-ok: #047857;
+  --c-ok-soft: #ecfdf5;
+
+  --radius: 8px;
+  --radius-lg: 12px;
+  --shadow-sm: 0 1px 2px rgb(15 23 42 / 6%);
+  --shadow: 0 2px 8px rgb(15 23 42 / 8%);
+  --shadow-lg: 0 12px 32px rgb(15 23 42 / 16%);
+
+  --font: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', 'PingFang SC', sans-serif;
+  --mono: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+
+  /* ---------------- 长文本阅读（可被字号控件覆盖）----------------
+     这组变量是「正文阅读区」的单一事实来源。改阅读体验只改这里，
+     不要把字号/行高散落在各组件里 —— 那会导致详情页、AI 面板、
+     公告栏三处口径不一致，且字号调节只能改到其中一处。 */
+  --reading-size: 16px;        /* PC 16px 是中文长文本的下限，不是「够用」 */
+  --reading-lh: 1.75;          /* 1.75 是中文正文的舒适区（1.6 偏紧、1.9 偏松） */
+  --reading-max: 42em;         /* 约 42 汉字/行，视线横扫距离的舒适上界 */
+  --reading-gap: 0.9em;        /* 段间距，用 em 随字号缩放 */
+  --reading-color: #334155;    /* slate-700：长文本用深色，降低长时间阅读疲劳 */
+  --reading-tracking: 0.01em;  /* 中文略加字距，缓解密排造成的「糊」感 */
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  background: var(--c-bg);
+  color: var(--c-text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border: 1px solid var(--c-border-strong);
+  background: var(--c-surface);
+  color: var(--c-text-2);
+  border-radius: var(--radius);
+  padding: 5px 12px;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+
+button:hover:not(:disabled) {
+  background: var(--c-primary-soft);
+  border-color: var(--c-primary);
+  color: var(--c-primary);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+button.primary {
+  background: var(--c-primary);
+  border-color: var(--c-primary);
+  color: #fff;
+}
+
+button.primary:hover:not(:disabled) {
+  background: #1a43bb;
+  color: #fff;
+}
+
+button.active {
+  background: var(--c-primary-soft);
+  border-color: var(--c-primary);
+  color: var(--c-primary);
+  font-weight: 600;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  color: var(--c-text);
+  background: var(--c-surface);
+  border: 1px solid var(--c-border-strong);
+  border-radius: var(--radius);
+  padding: 5px 10px;
+  outline: none;
+}
+
+input:focus,
+select:focus {
+  border-color: var(--c-primary);
+  box-shadow: 0 0 0 3px rgb(29 78 216 / 12%);
+}
+
+a {
+  color: var(--c-primary);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* ---------- 通用小件 ---------- */
+
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  line-height: 18px;
+  background: var(--c-surface-2);
+  border: 1px solid var(--c-border);
+  color: var(--c-text-2);
+}
+
+.tag.primary { background: var(--c-primary-soft); border-color: #c7d7fe; color: var(--c-primary); }
+.tag.accent { background: var(--c-accent-soft); border-color: #fed7aa; color: var(--c-accent); }
+.tag.ok { background: var(--c-ok-soft); border-color: #a7f3d0; color: var(--c-ok); }
+.tag.danger { background: var(--c-danger-soft); border-color: #fecaca; color: var(--c-danger); }
+
+.muted { color: var(--c-muted); }
+.mono { font-family: var(--mono); font-size: 12px; }
+
+.empty {
+  padding: 32px 16px;
+  text-align: center;
+  color: var(--c-muted);
+}
+
+.banner {
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  border: 1px solid;
+  font-size: 13px;
+}
+
+.banner.warn { background: var(--c-accent-soft); border-color: #fed7aa; color: var(--c-accent); }
+.banner.error { background: var(--c-danger-soft); border-color: #fecaca; color: var(--c-danger); }
+
+.spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--c-border-strong);
+  border-top-color: var(--c-primary);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+/* 骨架屏：加载中不用转圈遮罩，避免布局跳动 */
+.skeleton {
+  background: linear-gradient(90deg, #eef2f7 25%, #f8fafc 50%, #eef2f7 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: 4px;
+}
+
+@keyframes shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}

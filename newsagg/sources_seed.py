@@ -210,6 +210,49 @@ ADDITIONAL_SOURCES: list[dict[str, Any]] = [
     _s("gov_hb_nyj", "湖北省能源局", "420000", "http://nyj.hubei.gov.cn",
        "/xwzx/", 1, 2, "gov", ("能源要闻",),
        note="湖北省能源局，三峡/水电与电网动态（域名当前不可达）"),
+
+    # ---------- anysearch 检索发现的全国性补充来源（2026-10-12 新增）----------
+    #
+    # **背景**：现有 45 个源里，国网/南网省级站点有相当比例不可达
+    # （TCP 443 拒绝 / WAF / DNS 不解析），北极星详情页被阿里云 WAF 拦，
+    # 导致「最近几天常常没有新稿」。以下 5 个站点是独立检索服务发现的、
+    # 本仓库原先没有覆盖的全国性能源媒体与主管部门，作为时效性与覆盖面补充。
+    #
+    # 全部站点已实测：HTTP 可达、robots 允许抓取新闻页（禁的都是 CMS 管理路径）。
+    _s("nea", "国家能源局", None, "https://www.nea.gov.cn",
+       "/", 1, 2, "gov", ("新闻发布", "政策解读"),
+       note="能源主管部门，政策原文一手来源；详情页形态 /20250605/<hash>/c.html"),
+    _s("nengyuanjie", "能源界", None, "https://www.nengyuanjie.net",
+       "/", 2, 4, "industry", ("全球能源要闻",),
+       note="全球中文能源门户；文章形态 /article/<数字>.html，列表页结构稳定"),
+    _s("chinapower", "电力网", None, "http://mm.chinapower.com.cn",
+       "/", 2, 4, "industry", ("国内新闻", "地方报道"),
+       note="电力行业门户；栏目分区清晰 /xw/gnxw/、/dww/dfbd/，含 swiper 轮播"),
+    _s("china5e", "中国能源网", None, "https://www.china5e.com",
+       "/", 2, 4, "industry", ("能源要闻",),
+       note="robots 禁止 /news/08* 与 /news/2014* 前缀，适配器必须避开这两段"),
+    _s("ceic", "国家能源集团", None, "https://www.ceic.com",
+       "/", 2, 6, "independent", ("集团要闻",),
+       note="央企官网；列表链接为相对路径 ../gjnyjtww/newCEN/，需规范化"),
+
+    # ---------- 电力央企官网（2026-10-12 新增）----------
+    #
+    # **背景**：现有来源中「省级电网公司官网」与「行业媒体」已覆盖较好，
+    # 但**发电央企集团总部**的官方新闻一直缺位。这 4 家是实测可达、
+    # robots 宽松（均无 robots.txt 或明确允许）的候选，与已有来源互补不重复。
+    # 站点发现过程见 docs/电力能源企业官网清单.md。
+    _s("cr_power", "华润电力", None, "https://www.cr-power.com",
+       "/zhxw/index.html", 1, 4, "independent", ("新闻资讯", "下属企业动态"),
+       note="文章 URL 自带日期 /zhxw/YYYY-MM-DD/N.html，可直接从 URL 取发布时间"),
+    _s("china_cdt", "中国大唐集团", None, "https://www.china-cdt.com",
+       "/dtwz/xwzx/jtxw/A024004002Gone1.html", 1, 4, "independent", ("集团新闻",),
+       note="正文容器 div.xwzx-content；列表页含日期"),
+    _s("ctg", "中国长江三峡集团", None, "https://www.ctg.com.cn",
+       "/sxjt/xwzx55/zhxw23/index.html", 1, 4, "independent", ("集团要闻", "综合新闻"),
+       note="正文容器 div#content_dsh；标题可能含 document.write 包装需清洗"),
+    _s("chng", "中国华能集团", None, "https://www.chng.com.cn",
+       "/list_jtyw/-/article/vUfd4jOBhajJ/list/23204/", 1, 6, "independent", ("集团要闻",),
+       note="Liferay 门户，列表为 JS 渲染（静态抓取 0 条），待走浏览器通道或定位数据接口"),
 ]
 
 #: 对外统一全量来源 = 原 39 条 + 补充来源

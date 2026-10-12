@@ -1,0 +1,14 @@
+# 依赖与产物
+node_modules/
+dist/
+
+# 本地环境（含 API Key，绝不入库）
+.env
+.env.local
+.env.*.local
+
+# 编辑器/系统
+.vscode/
+.idea/
+.DS_Store
+*.log

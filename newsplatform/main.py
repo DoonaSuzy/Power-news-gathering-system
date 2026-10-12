@@ -45,6 +45,7 @@ from newsplatform.core.exception_handlers import register_exception_handlers
 from newsplatform.core.logging import get_logger
 from newsplatform.core.metrics import instrument_app
 from newsplatform.core.middleware import RequestContextMiddleware
+from newsplatform.services.notice_service import get_notice_service
 
 __all__ = ["app", "create_app", "lifespan"]
 
@@ -94,9 +95,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if not collector_ok:
         log.warning("采集库不可用：文章与来源接口将降级（/health 返回 degraded）")
 
+    # 公告栏预热 + 定时刷新。
+    # 预热是**后台任务**，不阻塞启动：一次 LLM 调用要 4~15 秒，
+    # 阻塞会让所有端点一起等。首访可能拿到 ready=false，那好过全体等 15 秒。
+    notice_service = get_notice_service()
+    await notice_service.start_scheduler()
+
     try:
         yield
     finally:
+        await notice_service.stop_scheduler()
         await dispose_database()
         log.info("应用已关闭")
 

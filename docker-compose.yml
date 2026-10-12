@@ -212,11 +212,53 @@ services:
       - prometheus
     networks: [power-net]
 
+  # ------------------------------------------------------------------
+  # RustFS —— S3 兼容对象存储（新闻配图）
+  #
+  # 为什么是 RustFS 而不是 MinIO：
+  #   MinIO 社区版仓库已于 **2026-04-25 永久归档**，官方明确
+  #   「THIS REPOSITORY IS NO LONGER MAINTAINED」，且不再提供预编译二进制，
+  #   最后一个版本 RELEASE.2025-09-07 已一年未更新 —— CVE 永不开修。
+  #   详见 docs/对象存储选型-MinIO与RustFS对比.md
+  #
+  # 为什么带 profile=storage（默认不起）：
+  #   本项目图片总量约 1,000~6,000 张 / 1.5 GB，**并非所有部署都需要对象存储**。
+  #   默认不启动，需要时显式开启：
+  #     docker compose --env-file .env --profile storage up -d rustfs
+  #
+  # 端口：9000 = S3 API，9001 = Web 控制台
+  # ------------------------------------------------------------------
+  rustfs:
+    image: rustfs/rustfs:1.0.1
+    container_name: power-rustfs
+    restart: unless-stopped
+    profiles: ["storage"]
+    command: ["/data"]
+    environment:
+      RUSTFS_ACCESS_KEY: ${POWERNEWS_S3_ACCESS_KEY:?POWERNEWS_S3_ACCESS_KEY 未设置}
+      RUSTFS_SECRET_KEY: ${POWERNEWS_S3_SECRET_KEY:?POWERNEWS_S3_SECRET_KEY 未设置}
+      RUSTFS_CONSOLE_ADDRESS: ":9001"
+      RUSTFS_CONSOLE_ENABLE: "true"
+    volumes:
+      - rustfs_data:/data
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    healthcheck:
+      # RustFS 提供 /health 端点（MinIO 的 /minio/health/live 在它上面不存在）
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    networks: [power-net]
+
 volumes:
   mysql_data:
   redis_data:
   prometheus_data:
   grafana_data:
+  rustfs_data:
 
 networks:
   power-net:

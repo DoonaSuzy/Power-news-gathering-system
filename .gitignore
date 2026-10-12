@@ -58,3 +58,22 @@ data/power_news/_all_articles.csv
 # ---- 导出的一次性打包产物（git bundle）----
 _dist/
 *.bundle
+
+# 采集任务 CSV 双输出产物（2026-10-12）：按站点/日期分目录，属运行时产物不入库
+data/csv/
+data/collected/
+
+# 文档目录**不同步到 git**（2026-10-13 用户要求）
+# 原因：docs/ 是本地工作笔记（含省份攻克日志、逆向报告、内网信息），
+#       不进版本库、也不推送到 192.168.101.84。
+# 注意：仅加 gitignore **不会**让已跟踪的文件停止跟踪，
+#       必须配合 git rm -r --cached docs/（已在同一次提交里执行）。
+docs/
+
+# RustFS 二进制下载目录（2026-10-13）
+.rustfs/
+
+# 浏览器自动化（Playwright/Chrome）产生的用户配置目录，含缓存与登录态
+# 采集报告产物（crawl_report.py 输出），运行时数据
+.waf_chrome_profile/
+data/reports/

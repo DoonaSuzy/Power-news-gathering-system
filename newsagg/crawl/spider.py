@@ -31,6 +31,7 @@ from newsagg.crawl.mimetypes import is_non_text_page
 from newsagg.crawl.sampler import Sampler
 from newsagg.crawl.session import CrawlSession
 from newsagg.logutil import bind_context, get_logger
+from newsagg.rawstore import raw_store_for
 from newsagg.urls import normalize_url, url_hash
 
 log = get_logger("spider")
@@ -69,6 +70,9 @@ class SiteSpider(scrapy.Spider):
         ensure_loaded()
         self.adapter = get_adapter(session.adapter_name)
         self.sampler = Sampler(session.settings.samples_dir)
+        # 原始响应落盘层（默认关闭，用 POWERNEWS_KEEP_RAW=true 打开）。
+        # 它解决的是「改解析规则必须重抓」—— 存了原文就能重洗。
+        self.raw = raw_store_for(session.adapter_name)
         self._visited_pages: set[str] = set()
 
     # ------------------------------ 入口 ------------------------------
@@ -123,10 +127,18 @@ class SiteSpider(scrapy.Spider):
             return
 
         oldest = self._oldest_list_time(parsed)
-        if oldest is not None and oldest < self.session.window.start_cst:
-            # 已翻到窗口起点之前，停止翻页（本页候选仍要处理）
-            self.session.request_stop("window_start_reached")
-        else:
+        # ⚠️ 这里只能**判断**「是否已翻到窗口起点」，**不能**直接 request_stop()。
+        #
+        # ``should_stop`` 是全局的，而下面遍历候选项时每轮都有 ``_guard()`` 拦截；
+        # 一旦在循环前停机，循环第一项就会 return，**本页的候选一条都不会被处理**。
+        # 现象是「列表页里只要有一条窗口外的旧文章 → requests=1 / discovered=0」，
+        # 新源首采直接空转（实测 chinapower、china5e 都是这样，且难以从日志看出原因）。
+        #
+        # 正确顺序：先处理完本页候选，再决定是否停止**翻页**。
+        reached_window_start = (
+            oldest is not None and oldest < self.session.window.start_cst
+        )
+        if not reached_window_start:
             self.session.mark_discovery_success()
 
         for item in parsed.items:
@@ -140,8 +152,18 @@ class SiteSpider(scrapy.Spider):
                 meta={"powernews_url_hash": nh},
             )
 
+        if reached_window_start:
+            # 本页已处理完，翻到窗口起点即停止**继续翻页**。
+            #
+            # ⚠️ 必须用 ``stop_paging_only`` 而不是 ``request_stop``：
+            # 上面 26 个候选的详情请求已经 yield 出去、正在 Scrapy 队列里排队，
+            # 若设了全局 ``should_stop``，``parse_detail`` 开头的 ``_guard()``
+            # 会把它们**全部丢弃**（实测 discovered=26 / requests=1 / saved=0）。
+            self.session.stop_paging_only("window_start_reached")
+            return
+
         # 翻页
-        if parsed.next_url and not self._guard():
+        if parsed.next_url and not self.session.stop_paging and not self._guard():
             nxt = normalize_url(parsed.next_url)
             if nxt not in self._visited_pages:
                 self._visited_pages.add(nxt)
@@ -172,6 +194,13 @@ class SiteSpider(scrapy.Spider):
             return
         self.session.requests += 1
         nh = response.meta.get("powernews_url_hash") or url_hash(response.url)
+
+        # 原始响应落盘：**在解析之前**，且**不论解析成败**都存。
+        #
+        # 位置很关键 —— 放在解析之后的话，「解析失败」的页面就不会留档，
+        # 而那恰恰是最需要原文的场景（改选择器时要看当时的 DOM）。
+        # 存的是未解码的 bytes：原始字节才能保证编码可追溯。
+        self.raw.save(response.url, nh, response.body, status=response.status)
 
         if response.status in (404, 410):
             self.session.mark_task(nh, "skipped", skip_reason=f"http_{response.status}")

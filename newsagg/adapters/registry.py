@@ -78,6 +78,14 @@ ADAPTER_MODULES: tuple[str, ...] = (
     "newsagg.adapters.national.cpnn",
     "newsagg.adapters.national.bjx",
     "newsagg.adapters.national.in_en",
+    # anysearch 检索发现的补充来源（2026-10-12 新增，各站一个专属适配器）
+    "newsagg.adapters.national.nengyuanjie",
+    "newsagg.adapters.national.chinapower",
+    "newsagg.adapters.national.china5e",
+    # 电力央企官网（2026-10-12 新增）
+    "newsagg.adapters.national.cr_power",
+    "newsagg.adapters.national.china_cdt",
+    "newsagg.adapters.national.ctg",
     # ---------- 政府能源主管部门补充（gov）----------
     "newsagg.adapters.gov.gov_gz_nyj",
     "newsagg.adapters.gov.gov_gx_fgw",

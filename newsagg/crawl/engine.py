@@ -24,6 +24,7 @@ from newsagg.crawl.settings import scrapy_settings
 from newsagg.crawl.spider import SiteSpider
 from newsagg.db import Database
 from newsagg.errors import JobNotFound
+from newsagg.export import export_job_csv
 from newsagg.logutil import bind_context, get_logger
 from newsagg.queue import StreamQueue
 from newsagg.repo import Repository
@@ -212,4 +213,30 @@ def conclude(session: CrawlSession) -> dict:
         "stop_reason": session.stop_reason,
     }
     log.info("job %s 完成: %s", session.job_id, stats)
+
+    # ---------------- 双输出：数据库（上面已落）+ CSV 文件 ----------------
+    #
+    # 入库是**主链路**，CSV 是**附加产物**：导出失败绝不能让采集任务失败。
+    # 所以整体 try/except 兜住 —— 任何异常只记 warning，不影响本函数返回值，
+    # 也不影响 job 的终态（session.finish 已经写过库了）。
+    #
+    # 典型失败场景（都不能中断采集）：
+    #   - 磁盘满 / 无写权限 / 路径被占用（OSError）
+    #   - CSV 根目录所在盘符不存在（跨平台部署时）
+    #   - 导出期间的数据库连接抖动
+    try:
+        exported = export_job_csv(
+            job_id=session.job_id,
+            source_id=session.source_id,
+            db=getattr(session, "db", None),
+        )
+        if exported:
+            stats["csv_path"] = exported["path"]
+            stats["csv_rows"] = exported["rows"]
+    except Exception as exc:  # noqa: BLE001 - 文件侧异常不得影响采集结论
+        log.warning(
+            "job %s 导出 CSV 失败（入库不受影响）：%s: %s",
+            session.job_id, type(exc).__name__, exc,
+        )
+
     return stats

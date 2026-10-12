@@ -47,6 +47,7 @@ __all__ = [
     "resolve_province_code",
     "CATEGORY_CHOICES",
     "TimeRange",
+    "TIME_RANGE_DESC",
 ]
 
 SettingsDep = Annotated[PlatformSettings, Depends(get_platform_settings)]
@@ -73,6 +74,10 @@ _TIME_RANGE_DESC = (
     + f"；{RANGE_LABELS['custom']} = 用 since/until 自己给边界。"
     + "按**北京时间自然日**且含当天；与 since/until 互斥。"
 )
+
+#: 对外别名。``/articles`` 与 ``/news/summary`` 共用同一份描述文案——
+#: 两个查询面各写一句必然漂移（本项目已经在「合法取值抄两处」上踩过坑）。
+TIME_RANGE_DESC = _TIME_RANGE_DESC
 
 
 # ======================================================================
@@ -222,15 +227,7 @@ async def get_article_query(
     if category and category not in CATEGORY_CHOICES:
         raise BadRequest(f"category 取值必须是 {', '.join(CATEGORY_CHOICES)} 之一")
 
-    window = resolve_range(range_key)
-    if window is not None and (since or until):
-        raise BadRequest(
-            "range 与 since/until 二选一：用快捷档就别再传自定义边界，"
-            "要自定义请传 range=custom 或不传 range"
-        )
-    date_from, date_to = (
-        window if window is not None else (parse_day(since), parse_day(until, end_of_day=True))
-    )
+    date_from, date_to = resolve_time_window(range_key, since=since, until=until)
 
     province_codes = await resolve_province_codes(session, province)
 
@@ -248,6 +245,43 @@ async def get_article_query(
         page=pagination.page,
         page_size=pagination.page_size,
     )
+
+
+def resolve_time_window(
+    range_key: str | None,
+    *,
+    since: str | None = None,
+    until: str | None = None,
+) -> tuple[datetime | None, datetime | None]:
+    """把 ``range`` / ``since`` / ``until`` 三个参数解析成闭区间。
+
+    **这是唯一实现**：``/articles``（列表、计数、导出）与 ``/news/summary``
+    都必须调它。两处各写一遍的后果是「接口 A 说 307 篇、接口 B 说 306 篇」，
+    而且没法解释差在哪 —— 这个缺陷本项目已经踩过一次。
+
+    ``range`` 与 ``since`` / ``until`` 是**互斥**而非优先级关系：同时给无法判断
+    用户想要哪个窗口，直接 400 让他选一个，比按某一种优先级静默解释诚实。
+
+    Args:
+        range_key: 快捷档键名（``today`` / ``week`` / ``month`` / ``custom``）。
+        since: 自定义起始时间（北京时间）。
+        until: 自定义结束时间（只给日期则含当天 23:59:59）。
+
+    Returns:
+        ``(date_from, date_to)``，两端可能为 ``None``（表示该侧不过滤）。
+
+    Raises:
+        BadRequest: ``range`` 与 ``since`` / ``until`` 同时给出。
+    """
+    window = resolve_range(range_key)
+    if window is not None and (since or until):
+        raise BadRequest(
+            "range 与 since/until 二选一：用快捷档就别再传自定义边界，"
+            "要自定义请传 range=custom 或不传 range"
+        )
+    if window is not None:
+        return window
+    return parse_day(since), parse_day(until, end_of_day=True)
 
 
 ArticleQueryDep = Annotated[ArticleQuery, Depends(get_article_query)]

@@ -240,3 +240,128 @@ class ArticleRepository(BaseRepository):
     async def latest_published_at(self) -> datetime | None:
         """最近一篇的发布时间（健康检查/新鲜度看板用）。"""
         return (await self.session.execute(select(func.max(Article.published_at_cst)))).scalar()
+
+    # ---------------- 智能总结 ----------------
+    #: 送入摘要的正文最大字符数。抽取式打分是 O(词数)，一个窗口几千篇全量正文
+    #: 会让单次请求从几十毫秒涨到几秒；而要点通常就藏在导语与首段里。
+    SUMMARY_BODY_CHARS = 1500
+
+    async def window_day_count(self, q: ArticleQuery) -> int:
+        """窗口内**有文章的自然日**数（用于分层抽样的配额计算）。"""
+        stmt = (
+            select(func.count(func.distinct(func.date(Article.published_at_cst))))
+            .select_from(
+                Article.__table__.join(Source.__table__, Source.id == Article.source_id)
+            )
+            .where(*self.conditions(q))
+        )
+        return int((await self.session.execute(stmt)).scalar() or 0)
+
+    async def list_for_summary(self, q: ArticleQuery, *, limit: int) -> list[dict[str, Any]]:
+        """取「参与总结」的文章，**按自然日分层抽样**，按发布时间倒序返回。
+
+        ⚠️ 这里**不能**写成「ORDER BY published_at_cst DESC LIMIT N」。
+        那样取到的是「最近 N 篇」，于是：
+
+        - 近1个月窗口 549 篇 → 抽到的 40 篇全落在最后一天；
+        - 近1周窗口 307 篇 → 抽到的还是同样那 40 篇（因为都在 10-10）。
+
+        结果就是「今日 / 近1周 / 近1个月」三个档位返回**一模一样的要点**，
+        周期筛选形同虚设。实测确认过这个现象，不是理论担忧。
+
+        正确做法是先按天分桶、再按配额取：``per_day = ceil(limit / 有数据的天数)``。
+        窗口越大，每天取的比例越小，样本自然铺满整个周期。用窗口函数
+        ``ROW_NUMBER() OVER (PARTITION BY DATE(...))`` 一次查询完成。
+
+        与 :meth:`list` 的另外两点差异：
+        1. **取正文**：列表接口只取 200 字 ``excerpt``，不够判断「这段在讲什么」；
+        2. **正文在 SQL 层截断**（``LEFT(body_text, N)``），不把 TEXT 大字段全拉进内存。
+        """
+        cap = max(1, int(limit))
+        days = await self.window_day_count(q)
+        per_day = cap if days <= 1 else -(-cap // days)  # 向上取整
+
+        rn = func.row_number().over(
+            partition_by=func.date(Article.published_at_cst),
+            order_by=(Article.published_at_cst.desc(), Article.id.desc()),
+        ).label("rn")
+        inner = (
+            select(
+                Article.id,
+                Article.title,
+                func.left(
+                    func.coalesce(Article.body_text, ""), self.SUMMARY_BODY_CHARS
+                ).label("body_text"),
+                Article.source_name,
+                Article.published_at_cst,
+                Article.url,
+                Province.name.label("province_name"),
+                rn,
+            )
+            .join(Source.__table__, Source.id == Article.source_id)
+            .join(Province.__table__, Province.code == Source.province_code, isouter=True)
+            .where(*self.conditions(q))
+            .subquery()
+        )
+        stmt = (
+            select(
+                inner.c.id,
+                inner.c.title,
+                inner.c.body_text,
+                inner.c.source_name,
+                inner.c.published_at_cst,
+                inner.c.url,
+                inner.c.province_name,
+            )
+            .where(inner.c.rn <= per_day)
+            .order_by(inner.c.published_at_cst.desc(), inner.c.id.desc())
+            .limit(cap)
+        )
+        rows = (await self.session.execute(stmt)).mappings().all()
+        return [dict(r) for r in rows]
+
+    async def window_stats(self, q: ArticleQuery) -> dict[str, Any]:
+        """窗口内的结构统计：篇数、站点数、省份数、最早/最晚发布时间。
+
+        为什么单独一条 SQL 而不是拿 ``list_for_summary`` 的结果在 Python 里数：
+        后者只看了 ``limit`` 篇（默认 40），而 ``total`` 要的是**整个窗口**的篇数。
+        两个数字口径不同，必须分开取，否则会出现「共 40 篇」这种假象
+        （真实窗口里可能有 307 篇）。
+        """
+        row = (
+            await self.session.execute(
+                select(
+                    func.count().label("total"),
+                    func.count(func.distinct(Article.source_id)).label("sources"),
+                    func.count(func.distinct(Source.province_code)).label("provinces"),
+                    func.min(Article.published_at_cst).label("earliest"),
+                    func.max(Article.published_at_cst).label("latest"),
+                )
+                .select_from(
+                    Article.__table__.join(Source.__table__, Source.id == Article.source_id)
+                )
+                .where(*self.conditions(q))
+            )
+        ).mappings().first()
+        return dict(row) if row else {
+            "total": 0, "sources": 0, "provinces": 0, "earliest": None, "latest": None,
+        }
+
+    async def latest_window_with_data(self, q: ArticleQuery, *, days: int) -> datetime | None:
+        """在**不限时间**的同一套筛选条件下，找出最近一次有文章的日期。
+
+        用途：默认档 ``range=today`` 在凌晨或源站当天未发稿时会命中 0 篇，
+        直接返回空汇总对「看看最近有什么重点」没有任何帮助。调用方据此
+        回退到最近有数据的窗口，并在响应里**显式标注**回退 —— 静默改变
+        语义比返回空更糟。
+        """
+        base = replace(q, date_from=None, date_to=None)
+        stmt = (
+            select(func.max(Article.published_at_cst))
+            .select_from(
+                Article.__table__.join(Source.__table__, Source.id == Article.source_id)
+            )
+            .where(*self.conditions(base))
+        )
+        return (await self.session.execute(stmt)).scalar()
+

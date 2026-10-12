@@ -24,6 +24,30 @@ ENV_PREFIX = "POWERNEWS_PLATFORM_"
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
+def _load_dotenv_into_environ() -> None:
+    """把项目根的 ``.env`` 也灌进 ``os.environ``。
+
+    :class:`PlatformSettings` 通过 pydantic-settings 的 ``env_file`` 读 ``.env``，
+    但那些值**只进模型、不进 ``os.environ``**。于是任何用 ``os.getenv()`` 读配置的
+    代码都拿不到值 —— 而且失败方式是**静默回落默认值**：LLM 客户端读不到 api key
+    会安静地判定「未配置」，公告退化成标题罗列，界面看不出哪里错了。
+
+    实测踩过：``/api/v1/notices/status`` 返回 ``llm_configured: false``，
+    而 ``.env`` 里明明配好了三个变量。
+
+    ``override=False``：真实环境变量优先于文件，符合十二要素应用惯例。
+    """
+    try:
+        from dotenv import load_dotenv
+    except ImportError:  # 没装 python-dotenv 时保持现状，不阻断启动
+        return
+    load_dotenv(PROJECT_ROOT / ".env", override=False)
+
+
+# 模块导入即加载，保证任何 ``os.getenv`` 都能读到与 PlatformSettings 一致的值
+_load_dotenv_into_environ()
+
+
 class PlatformSettings(BaseSettings):
     """数据中台运行时配置。"""
 
@@ -34,7 +58,6 @@ class PlatformSettings(BaseSettings):
         extra="ignore",
         case_sensitive=False,
     )
-
     # ---------------- 应用 ----------------
     app_name: str = "Power News Platform"
     app_version: str = "0.1.0"
@@ -84,6 +107,20 @@ class PlatformSettings(BaseSettings):
     default_page_size: int = 20
     max_page_size: int = 100
 
+    # ---------------- 新闻智能总结（LLM）----------------
+    #: 总开关。默认关：没配 Key 时不该让接口去撞一次必然失败的请求。
+    llm_enabled: bool = False
+    #: OpenAI 兼容的 base url。换成任一兼容实现（自建 vLLM / 通义 / DeepSeek 等）
+    #: 只需改这一项，代码不感知厂商。
+    llm_base_url: str = "https://api.openai.com/v1"
+    llm_api_key: str = ""
+    llm_model: str = "gpt-4o-mini"
+    llm_timeout_seconds: float = 45.0
+    #: 单次总结最多喂给模型的字符数。超了按文章顺序截断 ——
+    #: 全量正文几十万字必然超上下文，且费用与窗口内文章数成正比。
+    llm_max_input_chars: int = 24_000
+    llm_max_tokens: int = 1_200
+
     # ------------------------------------------------------------------
     @field_validator("cors_origins", mode="before")
     @classmethod
@@ -102,6 +139,20 @@ class PlatformSettings(BaseSettings):
     @property
     def project_root(self) -> Path:
         return PROJECT_ROOT
+
+    @property
+    def llm_ready(self) -> bool:
+        """真正可用的判据：开关打开 **且** 三项必填都不为空。
+
+        只看 ``llm_enabled`` 会让「开了开关但忘填 Key」变成运行时 401，
+        而不是一个可以在启动时就报出来的配置错误。
+        """
+        return bool(
+            self.llm_enabled
+            and self.llm_api_key.strip()
+            and self.llm_base_url.strip()
+            and self.llm_model.strip()
+        )
 
     @property
     def docs_url(self) -> str | None:

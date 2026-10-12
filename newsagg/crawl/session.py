@@ -72,6 +72,8 @@ class CrawlSession:
         self.requests = 0
         self.failures = 0
         self.blocked = 0
+        #: 只停止继续翻页（不拦已发出的详情请求）。见 ``stop_paging_only``。
+        self.stop_paging = False
 
         # ---- 停机状态 ----
         self.should_stop = False
@@ -108,6 +110,28 @@ class CrawlSession:
             self.stop_reason = reason
             log.info("job %s 停机: %s", self.job_id, reason)
         self.should_stop = True
+
+    def stop_paging_only(self, reason: str) -> None:
+        """只停止**继续翻页**，不停止已发出的请求。
+
+        ⚠️ 这是修一个真实 bug 引入的方法，**不要用 ``request_stop`` 替代**。
+
+        场景：列表页已翻到窗口起点（``window_start_reached``）。
+        此时**本页候选的详情请求已经 yield 出去了**（Scrapy 异步排队），
+        若用 ``request_stop`` 设了全局 ``should_stop``，
+        那些详情请求的回调 ``parse_detail`` 会被开头的 ``_guard()`` **全部丢弃**。
+
+        实测现象：``discovered=26 / requests=1 / saved=0`` ——
+        候选登记了、列表页只请求 1 次、详情一条没落库，
+        且 ``--refresh`` 无效（它只影响 ``consider()``，管不到 ``_guard()``）。
+
+        所以「翻到窗口边界」只是**翻页终止条件**，不是「任务停机」：
+        记 ``stop_reason``（台账要统计"为什么停"），但**不动 ``should_stop``**。
+        """
+        if not self.stop_reason:
+            self.stop_reason = reason
+        self.stop_paging = True
+        log.info("job %s 停止翻页: %s（已发出的详情请求继续处理）", self.job_id, reason)
 
     def note_block(self, status: int) -> None:
         """记录一次被封。"""
