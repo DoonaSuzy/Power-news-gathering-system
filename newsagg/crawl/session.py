@@ -68,6 +68,9 @@ class CrawlSession:
 
         # ---- 运行期计数 ----
         self.discovered = 0
+        #: 列表页**解析出的条目数**（无论新旧）。与 ``discovered`` 的区别见
+        #: :meth:`decide` 的 docstring —— 判「列表页是否真空」只能看这个。
+        self.listed = 0
         self.saved = 0
         self.requests = 0
         self.failures = 0
@@ -144,19 +147,31 @@ class CrawlSession:
         self.failures += 1
 
     def decide(self) -> tuple[str, int]:
-        """任务终态判定。返回 ``(status, retry_minutes)``。"""
+        """任务终态判定。返回 ``(status, retry_minutes)``。
+
+        ⚠️ ``listed`` 与 ``discovered`` 必须分开看（这里踩过一个真 bug）：
+
+        * ``listed``     —— 列表页**解析出的条目数**（无论新旧）
+        * ``discovered`` —— 其中**本次新发现**的候选数（旧的会被 ``consider()`` 过滤）
+
+        增量采集时，若站点本轮没有更新，``discovered`` 会是 0 但 ``listed`` 正常。
+        早期用 ``discovered == 0`` 判断「列表页没拿到候选」，
+        导致**站点没更新也被判成异常**，45 个来源里 39 个卡在 ``retry_wait``、
+        调度器反复重试。所以「列表页是否真空」只能看 ``listed``。
+        """
         if self.blocked >= 5:
             return "retry_wait", 60
         if self.stop_reason in ("request_budget", "failure_ratio"):
             return "retry_wait", 30
         if self.discovered > 0 and self.saved == 0 and self.failures > 0:
             return "retry_wait", 30
-        if self.discovered == 0:
-            # 列表页没拿到候选：可能是站点改版或路径失效，进重试
+        # 列表页**一条都没解析出来**才是真异常（站点改版 / 路径失效 / 选择器过期）
+        if self.listed == 0:
             return "retry_wait", 120
         if self.saved > 0:
             return "partial" if self.should_stop else "succeeded", 0
-        return "partial", 0
+        # listed > 0 但 saved == 0：本轮无新文章，属正常（站点未更新）
+        return "succeeded", 0
 
     # ================= 列表页 =================
     def consider(self, url: str, url_hash: str, list_title: str = "") -> bool:

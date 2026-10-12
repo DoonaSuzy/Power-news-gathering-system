@@ -141,6 +141,11 @@ class SiteSpider(scrapy.Spider):
         if not reached_window_start:
             self.session.mark_discovery_success()
 
+        # 列表页解析出的条目数（**无论新旧**）。
+        # 判「列表页是否真空」看这个，不是 discovered —— 增量采集时
+        # 站点没更新会让 discovered=0 但 listed 正常，两者混用会误判异常。
+        self.session.listed += len(parsed.items)
+
         for item in parsed.items:
             if self._guard():
                 return
