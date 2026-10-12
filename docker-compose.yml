@@ -237,7 +237,16 @@ services:
   #   默认不启动，需要时显式开启：
   #     docker compose --env-file .env --profile storage up -d rustfs
   #
-  # 端口：9000 = S3 API，9001 = Web 控制台
+  # 端口（**两个都兼听 S3 API**，Console 挂在子路径下）：
+  #   9000 = S3 API          http://<host>:9000
+  #   9001 = Console UI      http://<host>:9001/rustfs/console/   ← 注意有路径后缀
+  #
+  # ⚠️ 访问 http://<host>:9000/ 会返回
+  #      <Error><Code>AccessDenied</Code><Message>Access Denied</Message></Error>
+  #    这是**正确且安全**的行为：根路径是「列出所有桶」，匿名请求必须被拒。
+  #    它不是故障，也不代表服务没起来 —— 判断服务是否活着要看 /health。
+  #    Console 也不在 9001 的根路径下（那里同样返回 AccessDenied），
+  #    而在 **/rustfs/console/** 子路径。
   # ------------------------------------------------------------------
   rustfs:
     image: rustfs/rustfs:1.0.1

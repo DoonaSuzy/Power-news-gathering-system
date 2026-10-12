@@ -317,7 +317,8 @@ def urls() -> int:
         if note:
             print(f"  （{note}）")
         print(f"  S3 API        : http://{host}:{API_PORT}")
-        print(f"  Console       : http://{host}:{CONSOLE_PORT}")
+        # ⚠️ Console 有路径后缀 /rustfs/console/，根路径返回 AccessDenied
+        print(f"  Console       : http://{host}:{CONSOLE_PORT}/rustfs/console/")
         print(f"  健康检查      : http://{host}:{API_PORT}{HEALTH_PATH}")
         print("  Console 登录  : Access Key / Secret Key 见 .env 的 POWERNEWS_S3_*")
 

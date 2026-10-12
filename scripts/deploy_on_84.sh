@@ -163,7 +163,7 @@ do_check() {
 
   hdr "[6] 与其它服务的端口关系"
   printf "  RustFS  S3 API   : %s\n" "$API_PORT"
-  printf "  RustFS  Console  : %s\n" "$CONSOLE_PORT"
+  printf "  RustFS  Console  : http://127.0.0.1:%s/rustfs/console/\n" "$CONSOLE_PORT"
   printf "  本项目中台       : %s  （8000 已被 newsagg-fastapi 占用，故走 8080）\n" "$PLATFORM_PORT"
 
   hdr "[7] 磁盘空间（图片预计 1.5 GB 起，留 10 倍余量）"
@@ -258,7 +258,7 @@ do_create_bucket() {
     mc mb --ignore-existing "pw/${POWERNEWS_S3_BUCKET}" >/dev/null 2>&1 && c_ok "已建桶 ${POWERNEWS_S3_BUCKET}"
   else
     printf "  (无 aws / mc 客户端，跳过自动建桶)\n"
-    printf "  → 可到 Console http://%s:%s 手工创建桶\n" "$HOST_IP" "$CONSOLE_PORT"
+    printf "  → 可到 Console http://%s:%s/rustfs/console/ 手工创建桶\n" "$HOST_IP" "$CONSOLE_PORT"
     printf "  → 或进容器：docker exec -it power-rustfs sh\n"
   fi
 }
@@ -322,12 +322,12 @@ $(printf '=%.0s' {1..68})
 
 ① 本机（84 自身）
   RustFS S3 API   : http://127.0.0.1:${API_PORT}
-  RustFS Console  : http://127.0.0.1:${CONSOLE_PORT}
+  RustFS Console  : http://127.0.0.1:${CONSOLE_PORT}/rustfs/console/
   健康检查        : http://127.0.0.1:${API_PORT}${HEALTH_PATH}
 
 ② 局域网 / Windows 开发机访问
   RustFS S3 API   : http://${HOST_IP}:${API_PORT}
-  RustFS Console  : http://${HOST_IP}:${CONSOLE_PORT}
+  RustFS Console  : http://${HOST_IP}:${CONSOLE_PORT}/rustfs/console/
   健康检查        : http://${HOST_IP}:${API_PORT}${HEALTH_PATH}
 
 ③ 本项目服务
