@@ -18,7 +18,8 @@ set -euo pipefail
 
 REMOTE_USER="${REMOTE_USER:-root}"
 REMOTE_HOST="${REMOTE_HOST:-192.168.101.84}"
-REMOTE_DIR="${REMOTE_DIR:-/opt/power-news}"
+# 2026-10-13 实测：84 上的部署目录是 /home/zhu/Power News Aggregator（有空格，全程加引号）
+REMOTE_DIR="${REMOTE_DIR:-/home/zhu/Power News Aggregator}"
 SSH_PORT="${SSH_PORT:-22}"
 
 LOCAL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -107,11 +108,11 @@ case "$MODE" in
     echo
     echo "=== 传输后核验：目标机上的 docs/ 应不存在 ==="
     if ssh -p "$SSH_PORT" "${REMOTE_USER}@${REMOTE_HOST}" \
-         "test -d '$REMOTE_DIR/docs' && echo present || echo absent" | grep -q absent; then
+         "test -d "$REMOTE_DIR/docs" && echo present || echo absent" | grep -q absent; then
       echo "  ✓ 目标机上没有 docs/ 目录"
     else
       echo "  ⚠ 目标机上存在 docs/ —— 若是历史遗留，手工清理："
-      echo "      ssh ${REMOTE_USER}@${REMOTE_HOST} 'rm -rf ${REMOTE_DIR}/docs'"
+      echo "      ssh ${REMOTE_USER}@${REMOTE_HOST} 'rm -rf "$REMOTE_DIR"/docs'"
     fi
     ;;
 

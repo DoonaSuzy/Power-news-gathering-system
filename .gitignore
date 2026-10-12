@@ -77,3 +77,10 @@ docs/
 # 采集报告产物（crawl_report.py 输出），运行时数据
 .waf_chrome_profile/
 data/reports/
+
+
+# 运行期数据整体不入库（2026-10-13 部署前清理）
+# 曾有 112 个 data/power_news/<省份>/<站点>/articles.csv|json 被 git 跟踪 ——
+# 那是早期一次性脚本的产物，属运行期数据，不该进版本库。
+# 已取消跟踪，本地 596 个文件完好。
+data/

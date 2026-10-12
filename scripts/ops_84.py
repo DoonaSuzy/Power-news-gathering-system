@@ -215,13 +215,84 @@ def stop_newsagg(client, project: str, *, dry_run: bool = False) -> int:
     return 0
 
 
+def clean_stopped(client, project: str, *, dry_run: bool = False) -> int:
+    """删除指定 compose 项目下**已停止**的容器。
+
+    ⚠️ 只删容器，**绝不删数据卷** —— 用户 2026-10-13 明确选择「删已停容器，
+    保留全部数据卷」。所以这里用 ``docker rm``（不带 ``-v``）。
+    若带 ``-v`` 会连带删除匿名卷，**可能误删数据**，因此写死不用。
+
+    Args:
+        client: SSH 连接。
+        project: compose 项目名。
+        dry_run: 只展示将删哪些，不实际执行。
+    """
+    code, out, _ = run(
+        client,
+        "docker ps -a --format '"
+        "{{.Names}}|{{.Label \"com.docker.compose.project\"}}|{{.Status}}'",
+    )
+    stopped = [
+        (p[0], p[2])
+        for line in out.splitlines()
+        if len(p := line.split("|")) == 3 and p[1] == project
+        and not p[2].lower().startswith("up")
+    ]
+    if not stopped:
+        print(f"✓ compose 项目 `{project}` 下没有已停止的容器")
+        return 0
+
+    print("=" * 76)
+    print(f"将删除 compose 项目 `{project}` 下**已停止**的容器")
+    print("（只删容器，**数据卷全部保留**）")
+    print("=" * 76)
+    for i, (name, status) in enumerate(stopped, 1):
+        print(f"  {i}. {name}   [{status}]")
+
+    print("\n数据卷（**不会被删除**）：")
+    _c, vols, _ = run(client, "docker volume ls --format '{{.Name}}'")
+    for line in vols.splitlines():
+        print(f"  · {line}")
+
+    if dry_run:
+        print("\n（dry-run：未实际执行）")
+        return 0
+
+    names = " ".join(n for n, _ in stopped)
+    print(f"\n执行：docker rm {names}   （不带 -v，卷保留）")
+    code, out, err = run(client, f"docker rm {names}", timeout=60)
+    if out:
+        for line in out.splitlines():
+            print(f"  {line}")
+    if code != 0:
+        print(f"✗ 删除失败：{err[:300]}")
+        return code
+
+    print("\n── 清理后全部容器 " + "─" * 52)
+    _c, out, _ = run(client, "docker ps -a --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'")
+    for line in out.splitlines():
+        print(f"  {line}")
+
+    print("\n── 数据卷仍在 " + "─" * 60)
+    _c, out, _ = run(client, "docker volume ls --format '{{.Name}}'")
+    for line in out.splitlines():
+        print(f"  {line}")
+
+    print("\n" + "=" * 76)
+    print(f"✅ 已清理 `{project}` 的已停容器；数据卷完好")
+    print("=" * 76)
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="84 主机 Docker 运维")
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--recon", action="store_true", help="只侦察（只读）")
     g.add_argument("--stop-newsagg", action="store_true",
                    help="停止 newsagg-platform 项目下的容器")
-    ap.add_argument("--dry-run", action="store_true", help="配合 --stop-newsagg：只看会停什么")
+    g.add_argument("--clean-stopped", action="store_true",
+                   help="删除 newsagg-platform 下已停止的容器（保留数据卷）")
+    ap.add_argument("--dry-run", action="store_true", help="只看会操作什么，不执行")
     args = ap.parse_args()
 
     client = connect()
@@ -230,10 +301,9 @@ def main() -> int:
     try:
         if args.recon:
             return recon(client)
-        # 2026-10-13 用户确认：停 `newsagg-platform`（另一套，Flask+FastAPI），
-        # 保留本仓库的 `power-news`。项目名硬编码在此而非模糊匹配 ——
-        # 见 find_targets 的 docstring：模糊匹配既误伤 power-news 又漏停它的子服务。
-        return stop_newsagg(client, "newsagg-platform", dry_run=args.dry_run)
+        if args.stop_newsagg:
+            return stop_newsagg(client, "newsagg-platform", dry_run=args.dry_run)
+        return clean_stopped(client, "newsagg-platform", dry_run=args.dry_run)
     finally:
         client.close()
 

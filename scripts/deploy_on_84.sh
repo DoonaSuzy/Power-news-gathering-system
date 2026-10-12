@@ -10,7 +10,7 @@
 #   【路径 1】从 Windows 同步过去后，在 84 上执行
 #     bash scripts/sync_to_84.sh                      # 本机执行，排除 docs/
 #     ssh <user>@192.168.101.84
-#     cd /opt/power-news && bash scripts/deploy_on_84.sh --check
+#     cd /home/zhu/Power News Aggregator && bash scripts/deploy_on_84.sh --check
 #
 #   【路径 2】只把本脚本 scp 过去执行
 #     scp scripts/deploy_on_84.sh user@192.168.101.84:/tmp/
@@ -28,7 +28,8 @@
 set -euo pipefail
 
 # ---------------------------------------------------------------- 配置
-PROJECT_DIR="${PROJECT_DIR:-/opt/power-news}"
+# 2026-10-13 实测：84 上的部署目录（有空格，全程加引号）
+PROJECT_DIR="${PROJECT_DIR:-/home/zhu/Power News Aggregator}"
 API_PORT="${RUSTFS_API_PORT:-9000}"
 CONSOLE_PORT="${RUSTFS_CONSOLE_PORT:-9001}"
 HEALTH_PATH="/health"
@@ -63,7 +64,7 @@ RustFS 部署脚本（在 192.168.101.84 上执行）
   bash scripts/deploy_on_84.sh --down      # 停止（保留数据）
 
 环境变量覆盖：
-  PROJECT_DIR=/opt/power-news RUSTFS_API_PORT=9000 bash scripts/deploy_on_84.sh --check
+  PROJECT_DIR=/home/zhu/Power News Aggregator RUSTFS_API_PORT=9000 bash scripts/deploy_on_84.sh --check
 EOF
     exit 0
     ;;
@@ -389,7 +390,7 @@ RustFS 部署脚本（在 192.168.101.84 上执行）
   bash scripts/deploy_on_84.sh --down      # 停止（保留数据）
 
 环境变量覆盖：
-  PROJECT_DIR=/opt/power-news   RUSTFS_API_PORT=9000   bash scripts/deploy_on_84.sh --check
+  PROJECT_DIR=/home/zhu/Power News Aggregator   RUSTFS_API_PORT=9000   bash scripts/deploy_on_84.sh --check
 EOF
     exit 1
     ;;
