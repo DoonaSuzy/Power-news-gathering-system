@@ -213,6 +213,11 @@ services:
     environment:
       GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      # 界面默认语言：中文（Grafana 13.x 内置简体中文翻译）。
+      # 用户仍可在个人偏好里覆盖（头像 → Preferences → Language）。
+      # 注意：这只翻译 Grafana **自身 UI**（菜单/按钮/提示），
+      # 看板面板标题来自 dashboards/power-news.json，本来就是中文。
+      GF_DEFAULT_LANGUAGE: zh-Hans
     volumes:
       - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
