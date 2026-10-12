@@ -46,8 +46,17 @@ class StreamQueue:
                 import redis
             except ImportError as exc:  # pragma: no cover
                 raise QueueError("缺少 redis 依赖，请先 pip install -r requirements.txt") from exc
+            # socket_timeout **必须大于 XREADGROUP 的阻塞窗口**（默认 5s），
+            # 否则阻塞还没结束，socket 读先超时了 —— 表现为 worker 日志里
+            # 刷屏的 "Timeout reading from socket"，且积压消息得不到认领。
+            # 留 10s 余量：BLOCK 5s 正常返回，真断连也能在 15s 内发现。
             self._client = redis.Redis.from_url(
-                self.settings.redis_url, decode_responses=True, protocol=2
+                self.settings.redis_url,
+                decode_responses=True,
+                protocol=2,
+                socket_timeout=15,
+                socket_connect_timeout=5,
+                health_check_interval=30,
             )
         return self._client
 
@@ -92,14 +101,37 @@ class StreamQueue:
     # ---------------- 消费 ----------------
     def take(self, *, consumer: str, block_ms: int = 5000, count: int = 1,
              ) -> list[tuple[str, int]]:
-        """读取新消息，返回 ``[(message_id, job_id)]``。"""
+        """读取新消息，返回 ``[(message_id, job_id)]``。
+
+        ⚠️ **阻塞读超时不算错误** —— 它就是「这段时间没有新消息」，
+        必须返回空列表而不是抛异常。理由：
+        调用方（worker）在 ``take()`` 返回空后才会去 ``reclaim_stale()``
+        认领积压消息。若超时抛异常，异常会冒泡到主循环被吞掉，
+        **reclaim 永远不会执行**，PEL 里的消息就会无限积压。
+
+        （84 生产环境实测：109 条消息被卡 2 小时，就是这个原因 ——
+        ``lag=0`` 时每次 XREADGROUP 都超时，worker 反复"业务异常，继续"，
+        但从不认领积压。）
+
+        Raises:
+            QueueError: 仅针对**真错误**（连接断开、协议错误等）。
+        """
         self.ensure_group()
         try:
             resp = self.client.xreadgroup(
                 groupname=self.group, consumername=consumer,
                 streams={self.stream: ">"}, count=count, block=block_ms,
             )
+        except TimeoutError:
+            # 阻塞窗口内没有新消息 —— 正常情况，返回空让调用方去 reclaim
+            return []
         except Exception as exc:  # noqa: BLE001
+            # redis-py 把底层 socket 超时包装成 redis.exceptions.TimeoutError，
+            # 而它在 `TimeoutError` 的继承链上不一定是内置 TimeoutError，
+            # 所以这里再用消息特征兜一层，避免同类问题换个异常类型又漏掉。
+            if "timeout" in str(exc).lower():
+                log.debug("XREADGROUP 阻塞超时（无新消息）: %s", exc)
+                return []
             raise QueueError(f"XREADGROUP 失败: {exc}") from exc
 
         out: list[tuple[str, int]] = []

@@ -53,7 +53,13 @@ def _utc_now():
 def take_assignment(queue: StreamQueue, db: Database, owner: str) -> bool:
     """取一条任务并处理。返回 True 表示本次确实干了活。"""
     repo = Repository(db)
-    messages = queue.take(consumer=owner, block_ms=5000, count=1)
+    # 取新消息失败时**不能直接 return** —— 那会跳过下面的 reclaim_stale，
+    # 让 PEL 里的积压消息永远得不到认领。所以这里吞掉异常转去认领。
+    messages: list = []
+    try:
+        messages = queue.take(consumer=owner, block_ms=5000, count=1)
+    except PowerNewsError as exc:
+        log.warning("取新消息失败，转去认领积压: %s", exc)
 
     if not messages:
         # 没有新消息时，认领其他 worker 崩溃后遗留的超时消息。
