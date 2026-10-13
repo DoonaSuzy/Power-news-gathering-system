@@ -39,6 +39,94 @@
 
 ---
 
+## 🛠 技术栈（定型版本）
+
+> 版本号取自 `requirements.txt` / `newsplatform/requirements.txt` / `web/package.json`，
+> **不是大概齐**；基础设施版本取自 `docker-compose.yml` 的镜像标签。
+
+### 后端 · 数据中台
+
+| 组件 | 版本 | 用途 |
+| --- | --- | --- |
+| **Python** | **≥ 3.11** | 运行环境（生产用 3.12） |
+| **FastAPI** | **0.115.6** | REST API 框架（39 个端点） |
+| **Uvicorn[standard]** | **0.34.0** | ASGI 服务器 |
+| **Pydantic** | **2.10.4** | 请求/响应校验（v2 风格） |
+| **pydantic-settings** | **2.7.0** | 配置管理（12-factor） |
+| **SQLAlchemy[asyncio]** | **2.0.43** | ORM（异步） |
+| **aiomysql** | **0.2.0** | MySQL 异步驱动 |
+| **structlog** | **24.4.0** | 结构化日志 |
+| **prometheus-client** | **0.26.0** | 指标暴露（`/metrics`） |
+| **httpx** | **0.28.1** | 异步 HTTP 客户端 |
+
+### 采集 · 爬虫引擎
+
+| 组件 | 版本 | 用途 |
+| --- | --- | --- |
+| **Scrapy** | **2.19.0** | 爬虫框架（57 个适配器） |
+| **parsel** | **1.12.1** | HTML/XML 选择器（XPath/CSS） |
+| **GNE** | **0.3.1** | 通用正文抽取（兜底） |
+| **PyMySQL** | **1.2.3** | 同步 MySQL 驱动（采集侧） |
+| **redis** | **8.1.0** | Redis 客户端（Stream 任务队列） |
+| **python-dotenv** | **1.2.4** | `.env` 加载 |
+| **tzdata** | **2026.5** | 时区数据库（CST 换算） |
+| **Playwright** | **1.49.0** | 浏览器自动化（**仅客户端库**，连远端 CDP） |
+| **boto3** | **≥ 1.34** | S3 客户端（配图上传 RustFS） |
+
+### 前端 · Web UI
+
+| 组件 | 版本 | 用途 |
+| --- | --- | --- |
+| **Vue** | **3.5.13** | 组合式 API（`<script setup>`） |
+| **Vite** | **6.0.7** | 构建工具（dev server + 打包） |
+| **@vitejs/plugin-vue** | **5.2.1** | SFC 编译 |
+
+> 无 UI 组件库、无状态管理库 —— 单页轻量应用，**刻意不引**（多一个依赖多一份维护成本）。
+> 生产由中台 `StaticFiles` 托管构建产物（同域免 CORS）。
+
+### 基础设施（Docker 镜像）
+
+| 组件 | 镜像标签 | 用途 |
+| --- | --- | --- |
+| **MySQL** | **8.4** | 采集库 `power_news` + 中台库 `powernews_platform` |
+| **Redis** | **7-alpine** | 任务队列（Redis Stream + 租约） |
+| **RustFS** | **rustfs/rustfs:1.0.1** | 对象存储（配图，S3 兼容） |
+| **Prometheus** | **prom/prometheus:latest** | 指标采集 + 告警规则 |
+| **Grafana** | **grafana/grafana:latest** | 可视化看板（已中文化 `zh-Hans`） |
+| **Playwright** | **mcr.microsoft.com/playwright:v1.49.0-jammy** | CDP 浏览器通道（过瑞数 412） |
+
+> **为什么对象存储用 RustFS 而不是 MinIO**：MinIO 社区版 2026-04-25 仓库永久归档、
+> Docker Hub 镜像下线、CVE 不再修 —— 详见 `docs/对象存储选型-MinIO与RustFS对比.md`。
+
+### 工具链
+
+| 工具 | 版本 | 用途 |
+| --- | --- | --- |
+| **Ruff** | **0.17.0** | Lint + Format（替代 black/isort/flake8） |
+| **pytest** | **9.1.1** | 单元测试（**528 个**） |
+| **pytest-asyncio** | **1.4.0** | 异步测试支持 |
+| **fakeredis** | **2.39.0** | Redis 测试替身（测试**不需要真 Redis**） |
+| **freezegun** | **1.5.1** | 时间冻结（时间窗口逻辑测试） |
+| **Docker / Compose** | ≥ 20.10 / v2 | 编排（10 个服务 + profile 分层） |
+
+### 架构一句话
+
+```
+Scrapy 采集 → Redis Stream 队列 → Worker 消费 → MySQL 落库
+                                      ↓
+                          图片异步下载 → RustFS
+                                      ↓
+                    FastAPI 中台（39 端点）→ Vue3 前端（同域托管）
+                                      ↓
+                        Prometheus + Grafana 监控
+```
+
+**两个库职责不混**：`powernews`（采集库，`newsagg` 独占写）与
+`powernews_platform`（中台库，存 `api_keys`/`audit_logs`/`stats_snapshots`）。
+
+---
+
+
 ## 📁 目录结构
 
 ```
