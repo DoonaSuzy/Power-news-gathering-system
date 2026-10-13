@@ -278,6 +278,70 @@ services:
       start_period: 20s
     networks: [power-net]
 
+  # ------------------------------------------------------------------
+  # 浏览器通道 —— 过瑞数 412 等 JS 挑战（13 个国网站点需要）
+  #
+  # 为什么用独立 sidecar 而不是装进主镜像：
+  #   主镜像被 4 个服务共用（fastapi/scheduler/worker/backfill），
+  #   装 Chrome 会让**每个**容器都 +400MB；且浏览器崩溃/内存泄漏
+  #   不该影响采集主进程。独立容器可单独重启、单独限资源。
+  #
+  # 为什么不担心 84 内存只有 3.8G（实测可用 ~1.9G）：
+  #   headless Chrome 单实例约 250MB，配合 mem_limit 上限可控；
+  #   镜像约 1.5GB，磁盘可用 34G 足够。
+  #
+  # 为什么不需要 GUI：
+  #   headless 模式**不需要 X11** —— 直接渲染到内存。
+  #   仅当要「看窗口调试」才需虚拟显示（本项目不需要）。
+  #
+  # 用法：
+  #   docker compose --env-file .env --profile browser up -d browser
+  #   CDP 端点：ws://browser:3000（容器内）/ ws://192.168.101.84:3010（宿主）
+  # ------------------------------------------------------------------
+  browser:
+    # jammy 标签对齐目标机 Ubuntu 22.04 —— 用 noble 会因缺 glibc 2.39 报错
+    image: mcr.microsoft.com/playwright:v1.49.0-jammy
+    container_name: power-browser
+    profiles: ["browser"]
+    restart: unless-stopped
+    # Chromium 必需：默认 /dev/shm 仅 64MB，多标签页必崩
+    shm_size: 1gb
+    # 资源上限防跑飞（84 可用内存仅 ~1.9G）
+    mem_limit: 1g
+    cpus: 1.0
+    environment:
+      TZ: Asia/Shanghai
+    # ⚠️ 为什么用 `run-server` 而不是直接 `chromium --remote-debugging-port`：
+    #    Chrome 自 v111 起**忽略 `--remote-debugging-address`**（安全修复），
+    #    CDP 端口**只监听 127.0.0.1** —— 同 Docker 网络的其他容器也连不上。
+    #    镜像里又没有 socat/nginx 可做转发。
+    #    `run-server` 自己监听 0.0.0.0:3000 并**内部代理**到浏览器，绕开这个限制。
+    #
+    # ⚠️ 但 run-server **无法传浏览器启动参数**，因此：
+    #    * UA        → 由**客户端** newContext({userAgent}) 设置
+    #    * webdriver → 由**客户端** addInitScript 注入规避
+    #    两者见 scripts/browser_channel.py 的用法说明。
+    # ⚠️ 版本**必须固定**并与镜像标签对齐：不写版本时 npx 拉最新版（1.64），
+    #    与镜像自带浏览器（1.49 / chromium-1148）不匹配，连接时报
+    #    "Executable doesn't exist at .../chromium_headless_shell-1248/..."。
+    #    这个坑很隐蔽：CDP server 能起来（它不需要浏览器），一连就开不了页面。
+    command:
+      - npx
+      - playwright@1.49.0
+      - run-server
+      - --port=3000
+      - --host=0.0.0.0
+    ports:
+      - "${BROWSER_PORT:-3010}:3000"
+    networks: [power-net]
+    healthcheck:
+      # run-server 无 /health，TCP 探活足够判断进程活着
+      test: ["CMD-SHELL", "node -e \"require('net').connect(3000,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
 volumes:
   mysql_data:
   redis_data:

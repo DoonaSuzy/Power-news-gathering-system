@@ -23,3 +23,11 @@ pytest-asyncio==1.4.0
 fakeredis==2.39.0
 freezegun==1.5.1
 ruff==0.17.0
+
+# 浏览器采集通道客户端（过瑞数 412 等 JS 挑战）。
+# ⚠️ 只装**客户端库**，不要跑 `playwright install` ——
+#    浏览器在 84 的 browser 容器里（mcr.microsoft.com/playwright:v1.49.0-jammy），
+#    本地下载一份纯属浪费 400MB。
+# ⚠️ 版本必须与 browser 容器的 run-server 版本一致，否则报
+#    "keep your local Playwright version in sync with the remote service version"。
+playwright==1.49.0
