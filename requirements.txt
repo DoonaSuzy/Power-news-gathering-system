@@ -31,3 +31,7 @@ ruff==0.17.0
 # ⚠️ 版本必须与 browser 容器的 run-server 版本一致，否则报
 #    "keep your local Playwright version in sync with the remote service version"。
 playwright==1.49.0
+
+# 图片上传 RustFS（S3 兼容）。仅 `fetch-images` 与页面配图功能需要，
+# 不装则这些功能报「缺 boto3」并给出安装提示，不影响采集与中台。
+boto3>=1.34

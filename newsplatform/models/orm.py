@@ -254,3 +254,29 @@ class CrawlRun(CollectorBase):
     job_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     finished_at_utc: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class ArticleImage(CollectorBase):
+    """正文配图（与采集层 `article_images` 同表）。
+
+    只读 —— 写入由采集层的 `ImageStore` 负责，中台不修改。
+    """
+
+    __tablename__ = "article_images"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    article_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    source_id: Mapped[int] = mapped_column(SmallInteger, index=True)
+    url: Mapped[str] = mapped_column(String(768))
+    url_hash: Mapped[str] = mapped_column(String(40), index=True)
+    ordinal: Mapped[int] = mapped_column(SmallInteger, default=0)
+    alt_text: Mapped[str] = mapped_column(String(255), default="")
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    object_key: Mapped[str] = mapped_column(String(512), default="")
+    content_type: Mapped[str] = mapped_column(String(64), default="")
+    byte_size: Mapped[int] = mapped_column(Integer, default=0)
+    width: Mapped[int] = mapped_column(SmallInteger, default=0)
+    height: Mapped[int] = mapped_column(SmallInteger, default=0)
+    fetched_at_utc: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    error: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

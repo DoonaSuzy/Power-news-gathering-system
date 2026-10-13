@@ -750,6 +750,42 @@ def cmd_market_fetch(args: argparse.Namespace) -> int:
     return market_fetch(argv)
 
 
+def cmd_fetch_images(args: argparse.Namespace) -> int:
+    """把 `article_images` 里 pending 的配图下载并上传 RustFS。"""
+    from newsagg.config import get_settings
+    from newsagg.db import Database
+    from newsagg.imagestore import ImageStore
+    from newsagg.repo import Repository
+
+    settings = get_settings()
+    db = Database(settings)
+    store = ImageStore(settings, Repository(db), db)
+
+    total = {"processed": 0, "downloaded": 0, "failed": 0, "skipped": 0}
+    rounds = 0
+    while True:
+        rounds += 1
+        stats = store.process_pending(limit=args.batch)
+        if not stats["processed"]:
+            break
+        for k in total:
+            total[k] += stats.get(k, 0)
+        print(f"  第 {rounds} 批: 处理 {stats['processed']} "
+              f"(成功 {stats.get('downloaded', 0)} / 失败 {stats.get('failed', 0)} "
+              f"/ 跳过 {stats.get('skipped', 0)})", flush=True)
+        if args.max_rounds and rounds >= args.max_rounds:
+            break
+
+    print("=" * 56)
+    print(f"合计处理 {total['processed']} 张")
+    print(f"  ✓ 已上传 RustFS : {total['downloaded']}")
+    print(f"  ✗ 失败         : {total['failed']}")
+    print(f"  - 跳过(无效图)  : {total['skipped']}")
+    print(f"桶: {store.bucket}")
+    print("=" * 56)
+    return 0
+
+
 def cmd_market_stats(args: argparse.Namespace) -> int:
     """查看 ``market_prices`` 覆盖情况。"""
     from newsagg.market.cli import market_stats
@@ -976,6 +1012,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.set_defaults(func=cmd_weather)
 
     # ---- serve ----
+    # ---- fetch-images ----
+    p = sub.add_parser("fetch-images",
+                       help="下载正文配图并上传 RustFS（消费 article_images 的 pending 队列）")
+    p.add_argument("--batch", type=int, default=200, help="单批处理张数")
+    p.add_argument("--max-rounds", type=int, default=0, help="最多跑几批（0=直到没有 pending）")
+    p.set_defaults(func=cmd_fetch_images)
+
     p = sub.add_parser("serve", help="起数据中台（newsplatform）")
     p.add_argument("--host", default="127.0.0.1", help="监听地址")
     p.add_argument("--port", type=int, default=8000, help="监听端口")

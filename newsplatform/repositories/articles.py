@@ -16,7 +16,7 @@ from typing import Any
 from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from newsplatform.models.orm import Article, Province, Source
+from newsplatform.models.orm import Article, ArticleImage, Province, Source
 from newsplatform.repositories.base import BaseRepository, Page, escape_like
 
 __all__ = ["ArticleQuery", "ArticleRepository"]
@@ -365,3 +365,29 @@ class ArticleRepository(BaseRepository):
         )
         return (await self.session.execute(stmt)).scalar()
 
+    async def images_for_articles(self, article_ids: Sequence[int]) -> dict[int, list[dict]]:
+        """批量取文章配图（一次 IN 查询，避免 N+1）。
+
+        Args:
+            article_ids: 文章 id 列表。
+
+        Returns:
+            ``{article_id: [ {url, object_key, status, ordinal, alt_text, byte_size}, ... ]}``，
+            按 ``ordinal`` 升序（保正文顺序）。
+        """
+        if not article_ids:
+            return {}
+        stmt = (
+            select(ArticleImage)
+            .where(ArticleImage.article_id.in_(list(article_ids)))
+            .order_by(ArticleImage.article_id, ArticleImage.ordinal)
+        )
+        rows = (await self.session.execute(stmt)).scalars().all()
+        out: dict[int, list[dict]] = {}
+        for r in rows:
+            out.setdefault(int(r.article_id), []).append({
+                "url": r.url, "object_key": r.object_key or "",
+                "status": r.status or "pending", "ordinal": int(r.ordinal or 0),
+                "alt_text": r.alt_text or "", "byte_size": int(r.byte_size or 0),
+            })
+        return out

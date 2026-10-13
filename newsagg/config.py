@@ -99,6 +99,16 @@ class Settings:
     #: 立即重试会对着同一个失败原因连打，既浪费又刷日志。
     job_retry_min_idle_ms: int = 600_000
 
+    # ---- 对象存储（配图存 RustFS）----
+    #: S3 端点。容器内用服务名 `http://rustfs:9000`；宿主机用 IP。
+    s3_endpoint: str = ""
+    #: 桶名。配图默认 `powernews-images`（.env.example 里已给）。
+    s3_bucket: str = "powernews-images"
+    s3_access_key: str = ""
+    s3_secret_key: str = ""
+    #: 对外可访问的端点（生成给前端的图片 URL 用；容器内外地址不同）
+    s3_public_endpoint: str = ""
+
     # ---- 窗口 ----
     window_days: int = 7
     incremental_lookback_hours: int = 48
@@ -184,6 +194,11 @@ def get_settings() -> Settings:
         schedule_cron=_env("SCHEDULE_CRON", ""),
         job_max_retries=_env_int("JOB_MAX_RETRIES", 3),
         job_retry_min_idle_ms=_env_int("JOB_RETRY_MIN_IDLE_MS", 600_000),
+        s3_endpoint=_env("S3_ENDPOINT", ""),
+        s3_bucket=_env("S3_BUCKET", "powernews-images"),
+        s3_access_key=_env("S3_ACCESS_KEY", ""),
+        s3_secret_key=_env("S3_SECRET_KEY", ""),
+        s3_public_endpoint=_env("S3_PUBLIC_ENDPOINT", ""),
         window_days=_env_int("WINDOW_DAYS", 7),
         incremental_lookback_hours=_env_int("INCREMENTAL_LOOKBACK_HOURS", 48),
         gne_fallback=_env_bool("GNE_FALLBACK", True),

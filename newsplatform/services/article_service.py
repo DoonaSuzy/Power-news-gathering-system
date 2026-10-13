@@ -13,8 +13,30 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from newsplatform.core.exceptions import ArticleNotFound
-from newsplatform.models.schemas import ArticleDetail, ArticleListItem, ArticlePage
+from newsplatform.models.schemas import (
+    ArticleDetail,
+    ArticleListItem,
+    ArticlePage,
+)
 from newsplatform.repositories.articles import ArticleQuery, ArticleRepository
+
+
+def _image_url(object_key: str) -> str:
+    """把 RustFS 对象键拼成可直接访问的 URL。
+
+    用 `s3_public_endpoint`（宿主机地址）而非容器内的 `s3_endpoint` ——
+    前者客户端能访问，后者只在 Docker 网络内可达。
+    """
+    if not object_key:
+        return ""
+    # 函数内 import：避免 newsplatform ←→ newsagg 的模块级循环依赖
+    from newsagg.config import get_settings  # noqa: PLC0415
+
+    st = get_settings()
+    base = (st.s3_public_endpoint or st.s3_endpoint or "").rstrip("/")
+    if not base:
+        return ""
+    return f"{base}/{st.s3_bucket}/{object_key}"
 
 __all__ = ["ArticleService", "EXPORT_COLUMNS"]
 
@@ -35,7 +57,6 @@ EXPORT_COLUMNS: tuple[tuple[str, str], ...] = (
 
 #: 单次导出行数上限（防止一个请求把整库拉进内存）
 EXPORT_MAX_ROWS = 50_000
-
 
 class ArticleService:
     """文章查询与导出。"""
@@ -124,7 +145,6 @@ class ArticleService:
     async def latest_published_at(self):
         """最近一篇发布时间（健康检查用）。"""
         return await self.repo.latest_published_at()
-
 
 def _cell(value: Any) -> str:
     """把任意值转成 CSV 单元格字符串。"""

@@ -251,6 +251,76 @@ class Repository:
                 inserted += int(cur.rowcount or 0)
         return inserted
 
+    def list_pending_images(self, db, *, limit: int = 200) -> list:
+        """取一批待下载的配图。
+
+        Args:
+            db: Database（本方法自开连接 —— 它是批处理的入口，不参与事务编排）。
+            limit: 单批上限。
+
+        Returns:
+            含 ``id`` / ``url`` / ``url_hash`` / ``article_id`` 的字典列表。
+        """
+        conn = db.connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id, article_id, url, url_hash FROM article_images "
+                    "WHERE status='pending' ORDER BY id LIMIT %s",
+                    (limit,),
+                )
+                return list(cur.fetchall() or [])
+        finally:
+            conn.close()
+
+    def mark_image_fetched(self, conn, *, image_id: int, status: str,
+                           object_key: str = "", byte_size: int = 0,
+                           error: str = "") -> None:
+        """写配图抓取终态。
+
+        Args:
+            conn: 数据库连接（调用方负责提交）。
+            image_id: `article_images.id`。
+            status: ``downloaded`` / ``failed`` / ``skipped``。
+            object_key: 上传成功时的对象键。
+            byte_size: 字节数。
+            error: 失败原因（截断到列宽 255）。
+        """
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE article_images SET status=%s, object_key=%s, "
+                "byte_size=%s, error=%s, fetched_at_utc=UTC_TIMESTAMP() "
+                "WHERE id=%s",
+                (status, object_key, byte_size, error[:255], image_id),
+            )
+
+    def images_for_articles(self, conn, article_ids: list[int]) -> dict:
+        """批量取文章配图（供接口返回，避免 N+1 查询）。
+
+        Args:
+            conn: 数据库连接。
+            article_ids: 文章 id 列表。
+
+        Returns:
+            ``{article_id: [ {url, object_key, status, ordinal}, ... ]}``，
+            按 `ordinal` 升序（保持正文中的原始顺序）。
+        """
+        if not article_ids:
+            return {}
+        placeholders = ",".join(["%s"] * len(article_ids))
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT article_id, url, object_key, status, ordinal, "
+                f"byte_size, alt_text FROM article_images "
+                f"WHERE article_id IN ({placeholders}) ORDER BY article_id, ordinal",
+                tuple(article_ids),
+            )
+            rows = list(cur.fetchall() or [])
+        out: dict[int, list] = {}
+        for r in rows:
+            out.setdefault(int(r["article_id"]), []).append(r)
+        return out
+
     def finish_run(self, conn, run_id: int, job_count: int) -> None:
         with conn.cursor() as cur:
             cur.execute(

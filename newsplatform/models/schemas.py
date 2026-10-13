@@ -98,12 +98,26 @@ class ArticleListItem(_Base):
     quality_flags: str = Field("[]", description="质量标记 JSON 数组")
 
 
+class ArticleImage(_Base):
+    """正文配图（已上传 RustFS 的才有 object_url）。"""
+
+    url: str = Field(..., description="图片原始地址")
+    object_key: str = Field("", description="RustFS 对象键")
+    object_url: str = Field("", description="可直接访问的地址（未下载成功时为空）")
+    status: str = Field("pending", description="pending/downloaded/skipped/failed")
+    ordinal: int = Field(0, description="正文中出现顺序")
+    alt_text: str = Field("", description="alt 原文")
+    byte_size: int = Field(0, description="字节数")
+
+
 class ArticleDetail(ArticleListItem):
     """文章详情（含正文）。"""
 
     body_text: str | None = Field(None, description="正文纯文本，段落以空行分隔")
     published_at_utc: datetime | None = Field(None, description="发布时间（UTC）")
     content_hash: str = Field("", description="正文 SimHash")
+    images: list[ArticleImage] = Field(default_factory=list,
+                                       description="正文配图（按正文顺序）")
     created_at: datetime | None = None
     updated_at: datetime | None = None
 

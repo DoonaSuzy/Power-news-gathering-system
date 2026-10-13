@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections import Counter
 from dataclasses import dataclass
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
@@ -35,15 +36,58 @@ __all__ = [
     "extract_image_urls",
     "url_hash40",
     "is_probably_noise_url",
+    "NOISE_WORDS",
+    "NOISE_PATH_SEGMENTS",
+    "COMMON_PREFIX_MIN",
 ]
 
-#: 命中即判定为「非正文图」的 URL 特征词（小写匹配）
+
+#: 命中即判定为「非正文图」的 URL 特征词（小写匹配）。
+#:
+#: ⚠️ 中文站点的噪声常以**拼音缩写**形式出现在路径里，纯英文词表拦不住。
+#: 实测（中国电力新闻网）每篇捞出 12 张图，其中一半是：
+#:   `/dlxwwewm/...`   —— `ewm` = 二维码
+#:   `/dlxwwappxz/...` —— `appxz` = APP 下载
+#: 所以下面分三组：通用英文、站点公共路径、中文拼音缩写。
 _NOISE_WORDS = (
+    # --- 通用英文 ---
     "logo", "icon", "avatar", "qrcode", "qr_code", "qr-", "share",
     "weixin", "weibo", "spacer", "blank", "pixel", "loading", "spinner",
     "btn", "button", "nav_", "menu", "banner_ad", "advert",
     "placeholder", "default_img", "no-pic", "nopic",
+    # --- 站点公共元素（实测命中）---
+    "public", "common", "template", "header", "footer", "sprite",
+    "bg_", "_bg", "border", "divider", "line_",
+    # --- 中文拼音缩写（国内站点高频）---
+    "ewm",          # 二维码
+    "appxz",        # APP 下载
+    "xzzx",         # 下载中心
+    "top", "banner", "guanzhu", "weixinma",
+    "dianzan", "shoucang",
 )
+
+#: 路径片段级噪声：形如 `/<word>/` 的**整段路径**命中才算噪声。
+#:
+#: ⚠️ 名单必须**保守** —— 只放「必然是站点公共资源」的：
+#: `public` / `common` / `static` / `template` / `css|js|fonts`。
+#:
+#: **刻意不含 `images` / `img` / `pic`**：大量站点的**正文配图就在
+#: `/images/` 或 `/upload/images/` 下**，把它们算噪声会**误杀正文图**
+#: —— 那是比「多抓几张垃圾图」严重得多的错误（漏抓无法补救，
+#: 多抓只是多占几百 KB）。
+_NOISE_PATH_SEGMENTS = frozenset({
+    "public", "common", "static", "template", "templates",
+    "css", "js", "fonts", "assets",
+})
+
+#: 同一篇文章中，若某**路径前缀**下出现次数 ≥ 该值，视为站点公共元素。
+#:
+#: 依据：正文配图通常各在不同日期目录（`/202610/xxx.jpg`），
+#: 而公共元素高度集中（多张图挤在同一目录，如 `/public/a210726/`）。
+#: 这是**统计式过滤**，比关键词更鲁棒 —— 站点新增公共资源目录时
+#: 不需要改词表。
+_COMMON_PREFIX_MIN = 4
+
 
 #: 图片扩展名（没有扩展名的通常不是正文图，但也可能是接口图，故只做加分不做硬门槛）
 _IMG_EXT = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".avif")
@@ -97,14 +141,49 @@ def url_hash40(url: str) -> str:
 def is_probably_noise_url(url: str) -> bool:
     """判断 URL 是否像「非正文图」。
 
+    两重判据：
+    1. **关键词**：整串包含 `_NOISE_WORDS` 里任一（含中文拼音缩写）
+    2. **路径段**：形如 `/<word>/` 的整段命中 `_NOISE_PATH_SEGMENTS`
+
     Args:
         url: 图片地址。
 
     Returns:
         True 表示应跳过。
+
+    Note:
+        路径段判定**刻意保守**（不含 `images`/`img`）——
+        见 `_NOISE_PATH_SEGMENTS` 的注释：误杀正文图比多抓垃圾图严重得多。
     """
     low = url.lower()
-    return any(w in low for w in _NOISE_WORDS)
+    if any(w in low for w in _NOISE_WORDS):
+        return True
+    try:
+        parts = urlsplit(low)
+    except ValueError:
+        return False
+    for seg in parts.path.split("/"):
+        if seg and seg in _NOISE_PATH_SEGMENTS:
+            return True
+    return False
+
+
+def _path_prefix(url: str, *, depth: int = 2) -> str:
+    """取 URL 的路径前缀（用于统计式过滤）。
+
+    Args:
+        url: 图片地址。
+        depth: 取前几段路径。
+
+    Returns:
+        形如 `host/a/b` 的前缀键；无法解析时返回空串。
+    """
+    try:
+        p = urlsplit(url)
+    except ValueError:
+        return ""
+    segs = [s for s in p.path.split("/") if s]
+    return "/".join([p.netloc, *segs[:depth]])
 
 
 def _normalize(url: str, base_url: str) -> str:
@@ -182,7 +261,23 @@ def extract_image_urls(
             width=w, height=h,
         ))
         ordinal += 1
-        if len(out) >= max_images:
+        # 先放宽收集（供统计式过滤有足够样本），最后再按 max_images 截断
+        if len(out) >= max_images * 3:
             break
 
-    return out
+    # --- 统计式过滤：同一路径前缀出现 ≥N 次 → 站点公共元素，整组剔除 ---
+    # 依据：正文配图分散在不同日期目录，公共元素高度集中。
+    # 比关键词更鲁棒 —— 站点新增公共资源目录时不用改词表。
+    prefix_count = Counter(_path_prefix(r.url) for r in out)
+    kept = [r for r in out if prefix_count[_path_prefix(r.url)] < _COMMON_PREFIX_MIN]
+
+    # 截断并重排 ordinal（过滤后序号要连续，否则下游看到的序号有空洞）
+    return [
+        ImageRef(url=r.url, url_hash=r.url_hash, ordinal=i,
+                 alt_text=r.alt_text, width=r.width, height=r.height)
+        for i, r in enumerate(kept[:max_images])
+    ]
+#: 对外暴露的常量别名（便于测试与调参）
+NOISE_WORDS = _NOISE_WORDS
+NOISE_PATH_SEGMENTS = _NOISE_PATH_SEGMENTS
+COMMON_PREFIX_MIN = _COMMON_PREFIX_MIN
