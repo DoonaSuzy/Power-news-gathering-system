@@ -99,6 +99,17 @@ services:
         condition: service_healthy
     ports:
       - "${POWERNEWS_PLATFORM_HOST_PORT:-8080}:8000"
+    volumes:
+      # 前端构建产物 —— 由中台的 StaticFiles 托管（`newsplatform/main.py` §6）。
+      #
+      # 为什么由中台托管而不是单独起 Nginx：
+      #   ① 同域 → 前端 `/api/v1/...` 直接命中同源路由，天然免 CORS；
+      #   ② 不引新镜像 → 84 拉 Docker Hub 极慢（实测 nginx:alpine 三分钟没下来）；
+      #   ③ 一个入口 → 用户只记 8080。
+      #
+      # ⚠️ `web/dist` 是构建产物、**不入版本库**，部署时需单独传输
+      #   （`git archive` 打不出来，见 scripts/deploy_84_transfer.py 的说明）。
+      - ./web/dist:/app/web/dist:ro
     networks: [power-net]
 
   scheduler:

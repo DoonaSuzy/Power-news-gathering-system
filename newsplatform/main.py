@@ -32,10 +32,12 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from newsplatform.api.v1 import api_router
 from newsplatform.core.cache import get_cache
@@ -107,6 +109,32 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         await notice_service.stop_scheduler()
         await dispose_database()
         log.info("应用已关闭")
+
+
+class _SPAStaticFiles(StaticFiles):
+    """支持 SPA 路由回退的静态文件服务。
+
+    ## 为什么需要它
+
+    Vue Router 用 **history 模式**时，浏览器地址是 ``/article/123`` 这种
+    「看起来像真实路径」的形式。但磁盘上并没有 ``article/123`` 这个文件 ——
+    `StaticFiles` 默认直接 **404**。
+
+    正确做法是**回退到 index.html**，让前端路由去解析地址。
+
+    ## 只对 404 回退
+
+    其他状态（403 目录遍历、416 等）**照常抛出** —— 一律回退会把真实的
+    权限/路径问题掩盖成「页面能打开但内容不对」，更难排查。
+    """
+
+    async def get_response(self, path: str, scope):  # noqa: ANN201
+        try:
+            return await super().get_response(path, scope)
+        except HTTPException as exc:
+            if exc.status_code == 404:
+                return await super().get_response("index.html", scope)
+            raise
 
 
 def _attach_openapi_security(app: FastAPI) -> None:
@@ -183,15 +211,29 @@ def create_app(settings: PlatformSettings | None = None) -> FastAPI:
     #    放在最后挂载，因此它在中间件栈最外层，耗时统计覆盖完整请求链路。
     instrument_app(app)
 
-    @app.get("/", include_in_schema=False)
-    async def index() -> dict:
-        """根路径给一个指路牌，避免访问到 404 不知道从哪开始。"""
-        return {
-            "app": f"{cfg.app_name} {cfg.app_version}",
-            "api_prefix": cfg.api_prefix,
-            "docs": cfg.docs_url,
-            "health": f"{cfg.api_prefix}/health",
-        }
+    # 6) 前端静态托管（构建产物由 compose 挂载到 /app/web/dist）
+    #
+    # 为什么由中台托管而不是单独起 Nginx：
+    # - **同域** → 前端 `/api/v1/...` 直接命中同源路由，天然免 CORS；
+    # - **不引新镜像** → 84 拉 Docker Hub 极慢（实测 nginx:alpine 拉了 3 分钟没下来），
+    #   而中台容器本就在跑，挂个目录即可；
+    # - **一个入口**：用户只记 8080 一个端口。
+    #
+    # ⚠️ 必须在**所有 API 路由之后** mount("/")，否则会把 /api 一起吞掉。
+    _dist = Path("/app/web/dist")
+    if (_dist / "index.html").is_file():
+        app.mount("/", _SPAStaticFiles(directory=str(_dist), html=True), name="web")
+    else:
+        @app.get("/", include_in_schema=False)
+        async def index() -> dict:
+            """前端产物未挂载时的指路牌（避免访问 / 得到 404 不知道从哪开始）。"""
+            return {
+                "app": f"{cfg.app_name} {cfg.app_version}",
+                "api_prefix": cfg.api_prefix,
+                "docs": cfg.docs_url,
+                "health": f"{cfg.api_prefix}/health",
+                "web": "前端产物未挂载（compose 需把 web/dist 挂到 /app/web/dist）",
+            }
 
     return app
 
