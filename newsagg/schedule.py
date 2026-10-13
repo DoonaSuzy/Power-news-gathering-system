@@ -191,11 +191,49 @@ def run_coordinator(*, force: bool = False, dry_run: bool = False,
     return summary
 
 
+def run_image_fetch(*, batch: int = 200) -> dict[str, int]:
+    """跑一轮配图下载（`pending` → RustFS）。
+
+    为什么挂在调度器而不是独立定时器：
+    - 图片的「生产者」就是采集（spider 只收集 URL），挂在同一个循环里
+      天然有先后关系 —— 先采文章、再取配图；
+    - 少一个常驻进程（84 只有 3.8G 内存，能省就省）。
+
+    为什么不用每轮都跑：图片是**重 IO**（每张几百 KB），
+    10 分钟一轮太频繁 —— 新文章没那么多，白跑只是浪费带宽。
+    默认每 6 轮（约 1 小时）跑一次。
+
+    Args:
+        batch: 单轮最多取几张。
+
+    Returns:
+        统计字典；任何异常都吞掉并返回空统计 —— **配图失败绝不能
+        让调度器停摆**（那会导致所有来源都不再建批）。
+
+    Note:
+        这也是 `fetch-images` CLI 的内核，两处共用同一实现（唯一实现原则）。
+    """
+    try:
+        from newsagg.config import get_settings
+        from newsagg.db import Database
+        from newsagg.imagestore import ImageStore
+        from newsagg.repo import Repository
+
+        settings = get_settings()
+        db = Database(settings)
+        store = ImageStore(settings, Repository(db), db)
+        return store.process_pending(limit=batch)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("配图下载失败（不影响采集调度）: %s", exc)
+        return {}
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="定时协调器：建批并投递采集任务")
     ap.add_argument("--force", action="store_true", help="忽略采集间隔，全部来源建批")
     ap.add_argument("--dry-run", action="store_true", help="只建批不投递")
     ap.add_argument("--loop", action="store_true", help="常驻，每 10 分钟跑一轮")
+    ap.add_argument("--no-images", action="store_true", help="不自动跑配图下载")
     args = ap.parse_args(argv)
 
     bind_context(run_id=build_triggers())
@@ -205,10 +243,32 @@ def main(argv: list[str] | None = None) -> int:
 
     import time
 
-    log.info("协调器常驻模式启动（间隔 10 分钟）")
+    from newsagg.config import get_settings
+
+    settings = get_settings()
+    #: 每多少轮跑一次配图下载（轮间隔 10 分钟 → 6 轮≈1 小时）
+    images_every = max(1, getattr(settings, "images_every_rounds", 6))
+    images_on = (not args.no_images) and getattr(settings, "images_auto", True)
+
+    log.info("协调器常驻模式启动（间隔 10 分钟，配图自动下载=%s，每 %d 轮一次）",
+             "开" if images_on else "关", images_every)
+    rounds = 0
     try:
         while True:
+            rounds += 1
             run_coordinator(force=args.force, dry_run=args.dry_run)
+
+            # 配图下载：**放在协调之后** —— 先把新文章采进来，
+            # 才可能有新的 pending 图。放在前面等于每轮都处理上一轮的存量。
+            if images_on and rounds % images_every == 0:
+                stats = run_image_fetch(
+                    batch=getattr(settings, "images_batch", 200)
+                )
+                if stats.get("processed"):
+                    log.info("配图下载：处理 %d（成功 %d / 失败 %d / 跳过 %d）",
+                             stats["processed"], stats.get("downloaded", 0),
+                             stats.get("failed", 0), stats.get("skipped", 0))
+
             time.sleep(600)
     except KeyboardInterrupt:
         log.info("协调器停止")

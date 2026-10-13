@@ -154,6 +154,24 @@ SOURCES: list[dict[str, Any]] = [
     _s("csg_hn", "海南电网有限责任公司", "460000", "https://www.hn.csg.cn",
        "/", 0, 1, "csg", ("公司新闻", "一线传真")),
 
+    # ---- 南方电网集团总部（1 条，2026-10-13 新增）----
+    #
+    # 为什么单独建一个「总部」源，而不是让 5 个省站去抓总部内容：
+    #
+    #   `articles.source_id` **只能有一个** —— 一篇文章无法同时归属广东和云南。
+    #   若让 5 个省站都去抓总部列表页，它们会采到**同一批文章**，
+    #   各自以不同 source_id 入库 → 变成 5 份重复。
+    #
+    #   所以这里是**一个独立的集团级新闻源**，`province_code` 留空（全国口径）。
+    #   它的价值：5 个省级站是 SPA（合计仅 11 篇），总部站能补上集团层面的内容。
+    #
+    # 实测（2026-10-13）：`https://www.csg.cn/xwzx/qygg/` HTTP 200，
+    #   11841 字节，**22 个文章类链接** —— 可用。
+    _s("csg_hq", "中国南方电网有限责任公司（集团总部）", "",
+       "https://www.csg.cn", "/xwzx/qygg/", 1, 2, "csg", ("企业公告", "公司新闻"),
+       note="南方电网集团总部新闻；5 个省级子站为 SPA（合计仅 11 篇），此为集团级补充。"
+            "刻意不做省份归属 —— source_id 唯一，强行归属会误判"),
+
     # ==================== 三、独立电网（1 条）===========================
     _s("impc", "内蒙古电力（集团）有限责任公司", "150000", "https://www.impc.com.cn",
        "/", 0, 1, "independent", ("集团动态",),
@@ -210,6 +228,35 @@ ADDITIONAL_SOURCES: list[dict[str, Any]] = [
     _s("gov_hb_nyj", "湖北省能源局", "420000", "http://nyj.hubei.gov.cn",
        "/xwzx/", 1, 2, "gov", ("能源要闻",),
        note="湖北省能源局，三峡/水电与电网动态（域名当前不可达）"),
+
+    # ---------- 能源大省发改委（2026-10-13 探测后新增，6 个可选中上线 5 个）----------
+    #
+    # 探测方法：对 20 个候选域名做 DNS→TCP→HTTP 三层探测，只上「三层全通」的。
+    # ```
+    # fzggw.zj.gov.cn      HTTP 200  ★
+    # fzggw.jiangsu.gov.cn HTTP 200  ★
+    # fgw.sc.gov.cn        HTTP 200  ★
+    # fgw.henan.gov.cn     HTTP 200  ★
+    # fgw.shanxi.gov.cn    HTTP 200  ★
+    # fgw.hunan.gov.cn     HTTP 200  ★（首页随后超时，暂缓）
+    # fgw.gd.gov.cn        不可达    ✗（广东暂无政府替代源）
+    # ```
+    # 栏目路径从各站首页实取（**不是猜的**），见各条 `column`。
+    _s("gov_zj_fgw", "浙江省发展和改革委员会", "330000", "https://fzggw.zj.gov.cn",
+       "/col/col1599545/index.html", 1, 2, "gov", ("发改要闻",),
+       note="浙江发改委发改要闻（能源大省；浙江电网站 412 瑞数不可达，此为替代源）"),
+    _s("gov_js_fgw", "江苏省发展和改革委员会", "320000", "https://fzggw.jiangsu.gov.cn",
+       "/col/col282/index.html", 1, 2, "gov", ("发改要闻",),
+       note="江苏发改委发改要闻（用电大省）"),
+    _s("gov_sc_fgw", "四川省发展和改革委员会", "510000", "https://fgw.sc.gov.cn",
+       "/sfgw/fgyw/common_list.shtml", 1, 2, "gov", ("发改动态",),
+       note="四川发改委发改动态（水电大省）"),
+    _s("gov_hn_fgw", "河南省发展和改革委员会", "410000", "https://fgw.henan.gov.cn",
+       "/xwzx/fgyw", 1, 2, "gov", ("发改要闻",),
+       note="河南发改委发改要闻（华中电网枢纽）"),
+    _s("gov_sx_fgw", "山西省发展和改革委员会", "140000", "https://fgw.shanxi.gov.cn",
+       "/xwfb/fgyw/", 1, 2, "gov", ("发改要闻",),
+       note="山西发改委发改要闻（煤电大省）"),
 
     # ---------- anysearch 检索发现的全国性补充来源（2026-10-12 新增）----------
     #

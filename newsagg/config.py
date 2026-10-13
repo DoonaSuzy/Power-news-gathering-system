@@ -109,6 +109,15 @@ class Settings:
     #: 对外可访问的端点（生成给前端的图片 URL 用；容器内外地址不同）
     s3_public_endpoint: str = ""
 
+    # ---- 配图自动下载（挂在调度器循环里）----
+    #: 是否让调度器周期性跑配图下载。关掉则只能手工 `fetch-images`。
+    images_auto: bool = True
+    #: 单轮最多下几张。
+    images_batch: int = 200
+    #: 每多少轮跑一次（轮间隔 10 分钟 → 6 轮≈1 小时）。
+    #: 图片是重 IO，不必每轮都跑 —— 新文章没那么快。
+    images_every_rounds: int = 6
+
     # ---- 窗口 ----
     window_days: int = 7
     incremental_lookback_hours: int = 48
@@ -199,6 +208,9 @@ def get_settings() -> Settings:
         s3_access_key=_env("S3_ACCESS_KEY", ""),
         s3_secret_key=_env("S3_SECRET_KEY", ""),
         s3_public_endpoint=_env("S3_PUBLIC_ENDPOINT", ""),
+        images_auto=_env_bool("IMAGES_AUTO", True),
+        images_batch=_env_int("IMAGES_BATCH", 200),
+        images_every_rounds=_env_int("IMAGES_EVERY_ROUNDS", 6),
         window_days=_env_int("WINDOW_DAYS", 7),
         incremental_lookback_hours=_env_int("INCREMENTAL_LOOKBACK_HOURS", 48),
         gne_fallback=_env_bool("GNE_FALLBACK", True),

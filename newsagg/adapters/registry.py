@@ -56,6 +56,7 @@ ADAPTER_MODULES: tuple[str, ...] = (
     "newsagg.adapters.hunan.sgcc_hn",
     # ---------- 华南 ----------
     "newsagg.adapters.guangdong.csg_gd",
+"newsagg.adapters.guangdong.csg_hq",    # 南网集团总部（2026-10-13 新增）
     "newsagg.adapters.guangxi.csg_gx",
     "newsagg.adapters.hainan.csg_hn",
     # ---------- 西南 ----------
@@ -93,6 +94,11 @@ ADAPTER_MODULES: tuple[str, ...] = (
     "newsagg.adapters.gov.gov_sd_nyj",
     "newsagg.adapters.gov.gov_jx_nyj",
     "newsagg.adapters.gov.gov_hb_nyj",
+"newsagg.adapters.gov.gov_zj_fgw",   # 浙江发改委（2026-10-13 新增）
+"newsagg.adapters.gov.gov_js_fgw",   # 江苏发改委
+"newsagg.adapters.gov.gov_sc_fgw",   # 四川发改委
+"newsagg.adapters.gov.gov_hn_fgw",   # 河南发改委
+"newsagg.adapters.gov.gov_sx_fgw",   # 山西发改委
 )
 
 _loaded = False
