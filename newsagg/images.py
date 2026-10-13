@@ -64,6 +64,12 @@ _NOISE_WORDS = (
     "xzzx",         # 下载中心
     "top", "banner", "guanzhu", "weixinma",
     "dianzan", "shoucang",
+    # --- 实测漏网之鱼（从 failed 样本里发现的）---
+    "jiucuo",       # 纠错按钮（政府站标配，实测 `/exposure/images/jiucuo.png`）
+    "jiubian",      # 举报/纠编
+    "wap", "app_dl", "download",
+    # 二维码生成服务（动态 API，抓下来也是二维码不是正文图）
+    "qr.liantu.com", "api.php?text=", "cli.im", "qrserver",
 )
 
 #: 路径片段级噪声：形如 `/<word>/` 的**整段路径**命中才算噪声。

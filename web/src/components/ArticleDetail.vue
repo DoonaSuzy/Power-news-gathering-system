@@ -45,6 +45,36 @@ const localChips = computed(() => {
   return matchDimensions(text)
 })
 
+/** 配图加载失败集合（key = object_key 或 url）。 */
+const brokenImages = ref(new Set())
+
+/** 配图状态中文标签（与后端 `article_images.status` 对齐）。 */
+const IMG_STATUS_LABEL = {
+  downloaded: '已缓存',
+  pending: '待下载',
+  skipped: '已跳过',
+  failed: '下载失败',
+}
+
+/** 优先用 RustFS 的 `object_url`；没有则回退到原始 URL。
+ *
+ * 为什么要有回退：图片可能还没被 worker 下载（status=pending），
+ * 此时 `object_url` 是空的 —— 渲染原始 URL 至少让用户能看到图，
+ * 而不是一片空白。
+ */
+function resolveImageUrl(img) {
+  return img.object_url || img.url
+}
+
+function isBroken(img) {
+  return brokenImages.value.has(img.object_key || img.url)
+}
+
+/** 标记加载失败 —— 用新 Set 替换而非 mutate，保证 ref 触发响应式更新。 */
+function markBroken(img) {
+  brokenImages.value = new Set([...brokenImages.value, img.object_key || img.url])
+}
+
 const METHOD_LABEL = {
   llm: 'AI 模型',
   extractive: '抽取式',
@@ -293,6 +323,39 @@ function onKeydown(e) {
           </div>
           <div v-else class="article-body muted">（正文为空）</div>
         </section>
+
+        <!-- 正文配图：优先用 RustFS 的 object_url，未下载成功的回退原始 URL。
+             `object-fit: cover` + 固定高度保证**不变形**（等比裁切），
+             `@error` 标记加载失败（校验项之一：加载显示是否符合预期）。 -->
+        <section v-if="detail?.images?.length" class="panel">
+          <h3>
+            正文配图
+            <span class="tag">{{ detail.images.length }}</span>
+            <span v-if="brokenImages.size" class="tag warn">
+              {{ brokenImages.size }} 张加载失败
+            </span>
+          </h3>
+          <div class="image-grid">
+            <figure
+              v-for="img in detail.images"
+              :key="img.object_key || img.url"
+              class="image-item"
+              :class="{ broken: isBroken(img) }"
+            >
+              <img
+                :src="resolveImageUrl(img)"
+                :alt="img.alt_text || article.title"
+                loading="lazy"
+                decoding="async"
+                @error="markBroken(img)"
+              />
+              <figcaption v-if="isBroken(img)" class="muted">加载失败</figcaption>
+              <figcaption v-else-if="img.status !== 'downloaded'" class="muted">
+                {{ IMG_STATUS_LABEL[img.status] || img.status }}
+              </figcaption>
+            </figure>
+          </div>
+        </section>
       </div>
     </aside>
   </div>
@@ -445,6 +508,49 @@ function onKeydown(e) {
 .terms dd {
   margin: 0 0 0 12px;
   color: var(--c-text-2);
+}
+
+/* 配图网格：auto-fill 列数随宽度自适应，小屏降为更小单元。
+   `object-fit: cover` 是关键 —— 用固定高度 + 等比裁切，
+   保证**不同尺寸的原图在网格里都不变形**。 */
+.image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.image-item {
+  margin: 0;
+  position: relative;
+}
+
+.image-item img {
+  width: 100%;
+  height: 160px;
+  object-fit: cover;
+  border-radius: 6px;
+  display: block;
+  background: var(--bg-soft, #f3f4f6);
+}
+
+.image-item.broken img {
+  opacity: 0.35;
+  outline: 1px dashed var(--danger, #dc2626);
+}
+
+.image-item figcaption {
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+@media (max-width: 640px) {
+  .image-grid {
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  }
+  .image-item img {
+    height: 110px;
+  }
 }
 
 .article-body {

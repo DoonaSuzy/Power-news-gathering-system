@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,10 +16,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from newsplatform.core.exceptions import ArticleNotFound
 from newsplatform.models.schemas import (
     ArticleDetail,
+    ArticleImage,
     ArticleListItem,
     ArticlePage,
 )
 from newsplatform.repositories.articles import ArticleQuery, ArticleRepository
+
+log = logging.getLogger("newsplatform.articles")
 
 
 def _image_url(object_key: str) -> str:
@@ -81,7 +85,24 @@ class ArticleService:
         row = await self.repo.get(article_id)
         if not row:
             raise ArticleNotFound(f"文章不存在: {article_id}")
-        return ArticleDetail(**row)
+        detail = ArticleDetail(**row)
+        # 配图：一次 IN 查询取回（不做 N+1）。
+        #
+        # 为什么要 try 兜住：配图是**附加信息**，查询失败不该让整个详情接口 500。
+        # 但要**记 warning** —— 静默吞掉会让「images 一直空」变成查不出的悬案
+        # （本次就遇到过：schema 有默认空列表，异常被吞后表现为「接口正常但没图」）。
+        try:
+            imgs = await self.repo.images_for_articles([article_id])
+            detail.images = [
+                ArticleImage(
+                    **{**i, "object_url": _image_url(i.get("object_key", ""))}
+                )
+                for i in imgs.get(article_id, [])
+            ]
+        except Exception as exc:  # noqa: BLE001
+            log.warning("配图查询失败（详情仍返回）: %s", exc)
+            detail.images = []
+        return detail
 
     async def count(self, q: ArticleQuery) -> int:
         """命中条数（导出前预览）。"""

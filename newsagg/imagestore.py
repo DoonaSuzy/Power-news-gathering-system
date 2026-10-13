@@ -231,8 +231,8 @@ class ImageStore:
             self._client().put_object(
                 Bucket=self.bucket, Key=key, Body=data, ContentType=ctype,
             )
-            return ImageFetchResult(image_id, "downloaded",
-                                    object_key=key, byte_size=len(data))
+            return ImageFetchResult(image_id, "downloaded", object_key=key,
+                                    byte_size=len(data), content_type=ctype)
         except Exception as exc:  # noqa: BLE001
             return ImageFetchResult(image_id, "failed", error=str(exc)[:255])
         finally:
@@ -265,7 +265,7 @@ class ImageStore:
                     self.repo.mark_image_fetched(
                         conn, image_id=res.image_id, status=res.status,
                         object_key=res.object_key, byte_size=res.byte_size,
-                        error=res.error,
+                        error=res.error, content_type=res.content_type,
                     )
                     stats["processed"] += 1
                     stats[res.status] = stats.get(res.status, 0) + 1
