@@ -61,6 +61,9 @@ class ImageFetchResult:
         object_key: 上传成功时的对象键。
         byte_size: 字节数。
         error: 失败原因（截断到 255 内，适配列宽）。
+        content_type: 响应声明的 MIME（如 `image/png`）。
+        width: 解析出的宽度（0 = 未知）。**尺寸过滤的依据**。
+        height: 解析出的高度（0 = 未知）。
     """
 
     image_id: int
@@ -68,6 +71,9 @@ class ImageFetchResult:
     object_key: str = ""
     byte_size: int = 0
     error: str = ""
+    content_type: str = ""
+    width: int = 0
+    height: int = 0
 
 
 def object_key_for(url_hash: str, url: str, *, prefix: str = "articles") -> str:
