@@ -55,6 +55,10 @@ TARGETS_FALLBACK = {
 
 PROBE_SCRIPT = r"""
 import socket, sys, json
+try:
+    import urllib.request as U
+except Exception:
+    U = None
 hosts = json.loads(sys.argv[1])
 out = {}
 for h in hosts:
@@ -65,30 +69,69 @@ for h in hosts:
             ok, port = True, p; break
         except Exception:
             continue
-    out[h] = [ok, port]
+    # HTTP 层：TCP 通不代表能取到内容 —— 站点可能在应用层按 IP 段拒绝
+    # （实测：天津 TCP :80 通，但 HTTP 返回空响应 ERR_EMPTY_RESPONSE）
+    code = 0
+    if ok and U is not None:
+        for scheme in ("http", "https"):
+            try:
+                req = U.Request(scheme + "://" + h + "/", method="GET",
+                                headers={"User-Agent": "Mozilla/5.0"})
+                with U.urlopen(req, timeout=6) as r:
+                    code = r.status; break
+            except Exception as e:
+                if hasattr(e, "code"):
+                    code = e.code; break
+    out[h] = [ok, port, code]
 print(json.dumps(out))
 """
 
 
-def probe_local(hosts: list[str], *, timeout: float = 4.0) -> dict[str, tuple[bool, int]]:
-    """在**当前机器**（Windows）上并发探测 TCP 连通性。
+def probe_local(hosts: list[str], *, timeout: float = 4.0) -> dict[str, tuple]:
+    """在**当前机器**（Windows）上并发探测 TCP + HTTP 两层。
 
     Args:
         hosts: 域名列表。
         timeout: 单次连接超时（秒）。
 
     Returns:
-        ``{域名: (是否可达, 可用端口)}``。
+        ``{域名: (是否可达, 可用端口, HTTP状态码)}``。
+
+    Note:
+        **必须测 HTTP 层** —— 实测过：天津站 TCP `:80` 通，
+        但 HTTP 返回空响应（`ERR_EMPTY_RESPONSE`），Scrapy 与浏览器都拿不到内容。
+        只测 TCP 会把这种「应用层按 IP 段拒绝」误判成「网络正常」。
     """
-    def one(host: str) -> tuple[str, tuple[bool, int]]:
-        for port in (443, 80):
+    import urllib.error
+    import urllib.request
+
+    def one(host: str) -> tuple[str, tuple]:
+        ok, port = False, 0
+        for p in (443, 80):
             try:
-                s = socket.create_connection((host, port), timeout=timeout)
+                s = socket.create_connection((host, p), timeout=timeout)
                 s.close()
-                return host, (True, port)
+                ok, port = True, p
+                break
             except OSError:
                 continue
-        return host, (False, 0)
+
+        code = 0
+        if ok:
+            for scheme in ("http", "https"):
+                try:
+                    req = urllib.request.Request(
+                        f"{scheme}://{host}/", method="GET",
+                        headers={"User-Agent": "Mozilla/5.0"})
+                    with urllib.request.urlopen(req, timeout=8) as r:
+                        code = r.status
+                        break
+                except urllib.error.HTTPError as e:
+                    code = e.code
+                    break
+                except Exception:  # noqa: BLE001
+                    continue
+        return host, (ok, port, code)
 
     with ThreadPoolExecutor(max_workers=20) as ex:
         return dict(ex.map(one, hosts))
@@ -131,7 +174,8 @@ def probe_remote(
         _i, o, _e = c.exec_command(cmd, timeout=300)
         raw = o.read().decode("utf-8", "replace").strip()
         data = json.loads(raw) if raw else {}
-        return {k: (bool(v[0]), int(v[1])) for k, v in data.items()}
+        return {k: (bool(v[0]), int(v[1]), int(v[2]) if len(v) > 2 else 0)
+                for k, v in data.items()}
     finally:
         c.close()
 
@@ -197,8 +241,8 @@ def main() -> int:
     # ---- 输出对比 ----
     only_win, only_lin, both_ok, both_bad = [], [], [], []
     for h in hosts:
-        w_ok = win.get(h, (False, 0))[0]
-        l_ok = lin.get(h, (False, 0))[0]
+        w_ok = win.get(h, (False, 0, 0))[0]
+        l_ok = lin.get(h, (False, 0, 0))[0]
         if w_ok and l_ok:
             both_ok.append(h)
         elif w_ok and not l_ok:
@@ -216,7 +260,7 @@ def main() -> int:
         return f"✓ :{v[1]}" if v[0] else "✗ 不可达"
 
     for h in hosts:
-        w, l = win.get(h, (False, 0)), lin.get(h, (False, 0))
+        w, l = win.get(h, (False, 0, 0)), lin.get(h, (False, 0, 0))  # noqa: E741
         if not lin:
             verdict = "—"
         elif w[0] and not l[0]:
@@ -252,8 +296,8 @@ def main() -> int:
     report = {
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "total": len(hosts),
-        "windows": {h: {"ok": v[0], "port": v[1]} for h, v in win.items()},
-        "linux84": {h: {"ok": v[0], "port": v[1]} for h, v in lin.items()},
+        "windows": {h: {"tcp_ok": v[0], "port": v[1], "http": v[2]} for h, v in win.items()},
+        "linux84": {h: {"tcp_ok": v[0], "port": v[1], "http": v[2]} for h, v in lin.items()},
         "summary": {
             "both_ok": len(both_ok), "only_windows": len(only_win),
             "only_linux": len(only_lin), "both_bad": len(both_bad),
