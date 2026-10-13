@@ -48,13 +48,31 @@ const localChips = computed(() => {
 /** 配图加载失败集合（key = object_key 或 url）。 */
 const brokenImages = ref(new Set())
 
-/** 配图状态中文标签（与后端 `article_images.status` 对齐）。 */
-const IMG_STATUS_LABEL = {
-  downloaded: '已缓存',
-  pending: '待下载',
-  skipped: '已跳过',
-  failed: '下载失败',
-}
+/**
+ * 只展示**已缓存到 RustFS** 的配图（status=downloaded 且 object_url 非空）。
+ *
+ * ## 为什么其他状态一律不渲染
+ *
+ * **skipped（判定为无效图：图标/二维码/公共元素）绝对不能回退渲染原始 URL** ——
+ * 实测翻车：某篇文章 4 张图全部判定 skipped（站点导航图标 search/app/category/login），
+ * 但 `resolveImageUrl` 回退到原始 URL，站点图床还能访问，**图标照样显示**，
+ * 用户看到「标记了已跳过但图片还是显示」的矛盾。
+ *
+ * pending/failed 同理：pending 是还没下载（渲染原始 URL 会绕过全部审核），
+ * failed 是下载失败（原始 URL 可能也挂了）。
+ *
+ * 未收录的图只显示**汇总计数**，逐张渲染反而制造噪音。
+ */
+const cachedImages = computed(() =>
+  (detail.value?.images || []).filter(
+    (i) => i.status === 'downloaded' && i.object_url,
+  ),
+)
+
+/** 被隐藏（未收录）的配图数量，标题旁显示"N 张未收录"。 */
+const hiddenCount = computed(
+  () => (detail.value?.images || []).length - cachedImages.value.length,
+)
 
 /** 优先用 RustFS 的 `object_url`；没有则回退到原始 URL。
  *
@@ -324,20 +342,24 @@ function onKeydown(e) {
           <div v-else class="article-body muted">（正文为空）</div>
         </section>
 
-        <!-- 正文配图：优先用 RustFS 的 object_url，未下载成功的回退原始 URL。
-             `object-fit: cover` + 固定高度保证**不变形**（等比裁切），
-             `@error` 标记加载失败（校验项之一：加载显示是否符合预期）。 -->
+        <!-- 正文配图：**只渲染已缓存到 RustFS 的图（status=downloaded）**。
+             skipped（判定为图标/二维码/公共元素）/ pending / failed 的一律不渲染 ——
+             否则会把"已判定无效的图"又显示出来（实测翻车：导航图标照样显示）。
+             未收录的只在标题旁显示"N 张未收录"汇总计数。 -->
         <section v-if="detail?.images?.length" class="panel">
           <h3>
             正文配图
-            <span class="tag">{{ detail.images.length }}</span>
+            <span class="tag">{{ cachedImages.length }}</span>
+            <span v-if="hiddenCount" class="tag muted">
+              {{ hiddenCount }} 张未收录
+            </span>
             <span v-if="brokenImages.size" class="tag warn">
               {{ brokenImages.size }} 张加载失败
             </span>
           </h3>
-          <div class="image-grid">
+          <div v-if="cachedImages.length" class="image-grid">
             <figure
-              v-for="img in detail.images"
+              v-for="img in cachedImages"
               :key="img.object_key || img.url"
               class="image-item"
               :class="{ broken: isBroken(img) }"
@@ -350,11 +372,9 @@ function onKeydown(e) {
                 @error="markBroken(img)"
               />
               <figcaption v-if="isBroken(img)" class="muted">加载失败</figcaption>
-              <figcaption v-else-if="img.status !== 'downloaded'" class="muted">
-                {{ IMG_STATUS_LABEL[img.status] || img.status }}
-              </figcaption>
             </figure>
           </div>
+          <p v-else class="muted">本文的 {{ hiddenCount }} 张图未收录（无效或待处理）</p>
         </section>
       </div>
     </aside>
