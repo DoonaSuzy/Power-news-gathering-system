@@ -62,6 +62,7 @@ def _s(
     category: str,
     columns: tuple[str, ...],
     note: str = "",
+    enabled: bool = True,
 ) -> dict[str, Any]:
     """构造一条来源记录（字段名与来源清单文档 §8 完全一致，另加扩展字段）。"""
     return {
@@ -75,7 +76,7 @@ def _s(
         # ---- 以下为改造方案 §3.5 要求的 sources 表扩展字段 ----
         "category": category,
         "columns": list(columns),
-        "enabled": True,
+        "enabled": enabled,
         "note": note,
     }
 
@@ -167,10 +168,27 @@ SOURCES: list[dict[str, Any]] = [
     #
     # 实测（2026-10-13）：`https://www.csg.cn/xwzx/qygg/` HTTP 200，
     #   11841 字节，**22 个文章类链接** —— 可用。
+    # ⚠️ **默认停用（enabled=False）—— 这是合规决定，不是技术失败。**
+    #
+    # `https://www.csg.cn/robots.txt` 原文：
+    # ```
+    # User-agent: *
+    # Disallow: /          ← 全站禁止抓取
+    # ```
+    # 这是**最明确的禁止信号**。项目 robots 策略为 `obey`，
+    # middleware 会正确拦下（实测日志：`robots.txt 拒绝，跳过`）。
+    #
+    # 曾误判为「请求特征/TLS 指纹问题」（因为 curl 能取到 200），
+    # 实际是 robots —— **`curl` 不遵守 robots，Scrapy 遵守**，
+    # 所以「curl 通、Scrapy 不通」正是**合规生效**的表现。
+    #
+    # 保留本条目（而非删除）是为了**留痕**：说明这个源被评估过、
+    # 结论是「站点明确拒绝」，而不是「没人想到」。
     _s("csg_hq", "中国南方电网有限责任公司（集团总部）", "",
        "https://www.csg.cn", "/xwzx/qygg/", 1, 2, "csg", ("企业公告", "公司新闻"),
-       note="南方电网集团总部新闻；5 个省级子站为 SPA（合计仅 11 篇），此为集团级补充。"
-            "刻意不做省份归属 —— source_id 唯一，强行归属会误判"),
+       enabled=False,
+       note="★ 因 robots.txt 全站 Disallow 而停用（合规决定）。"
+            "curl 能取 200 但 Scrapy 被 robots 拦 —— 这正是合规生效。"),
 
     # ==================== 三、独立电网（1 条）===========================
     _s("impc", "内蒙古电力（集团）有限责任公司", "150000", "https://www.impc.com.cn",
