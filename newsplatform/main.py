@@ -35,9 +35,10 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from newsplatform.api.v1 import api_router
 from newsplatform.core.cache import get_cache
@@ -126,12 +127,20 @@ class _SPAStaticFiles(StaticFiles):
 
     其他状态（403 目录遍历、416 等）**照常抛出** —— 一律回退会把真实的
     权限/路径问题掩盖成「页面能打开但内容不对」，更难排查。
+
+    ## ⚠️ 必须捕获 **starlette** 的 HTTPException
+
+    `StaticFiles` 内部抛的是 `starlette.exceptions.HTTPException`。
+    **FastAPI 的 `HTTPException` 是它的子类**，所以
+    `except (fastapi.HTTPException)` **捕不到父类异常** —— 异常会冒泡给
+    中台的统一异常处理器，返回业务错误体 `{"code":3001,...}` 而不是回退。
+    这个坑很隐蔽：日志里看不到报错，只是「SPA 路由打不开」。
     """
 
     async def get_response(self, path: str, scope):  # noqa: ANN201
         try:
             return await super().get_response(path, scope)
-        except HTTPException as exc:
+        except StarletteHTTPException as exc:
             if exc.status_code == 404:
                 return await super().get_response("index.html", scope)
             raise
