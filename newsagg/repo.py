@@ -213,6 +213,44 @@ class Repository:
             )
             return int(cur.rowcount or 0)
 
+    def save_article_images(self, conn, *, article_id: int, source_id: int,
+                            refs: list) -> int:
+        """登记文章配图（**只写 URL，不下载**）。
+
+        与 `articles` 是**一对多**且生命周期独立：图片下载失败不该让文章入库失败，
+        所以拆成独立表 + 独立状态机（`pending → downloaded/skipped/failed`）。
+
+        Args:
+            conn: 数据库连接。
+            article_id: 所属文章 id。
+            source_id: 冗余的来源 id（便于按源统计，避免每次 join）。
+            refs: :class:`newsagg.images.ImageRef` 列表。
+
+        Returns:
+            本次**新插入**的行数（已存在的忽略，不算更新）。
+
+        Note:
+            `INSERT IGNORE` + `uk_img_article_url` 唯一键保证幂等 ——
+            同一篇文章重采时不会重复登记同一张图。
+            已下载过的图（status=downloaded）**不会被重置回 pending**，
+            否则会白重下一遍。
+        """
+        if not refs:
+            return 0
+        inserted = 0
+        with conn.cursor() as cur:
+            for r in refs:
+                cur.execute(
+                    "INSERT IGNORE INTO article_images "
+                    "(article_id, source_id, url, url_hash, ordinal, alt_text, "
+                    " width, height, status) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'pending')",
+                    (article_id, source_id, r.url, r.url_hash, r.ordinal,
+                     r.alt_text, r.width, r.height),
+                )
+                inserted += int(cur.rowcount or 0)
+        return inserted
+
     def finish_run(self, conn, run_id: int, job_count: int) -> None:
         with conn.cursor() as cur:
             cur.execute(

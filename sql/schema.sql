@@ -293,6 +293,53 @@ CREATE TABLE IF NOT EXISTS market_prices (
   COLLATE = utf8mb4_general_ci COMMENT = '市场行情指标（LNG/电煤/电价）';
 
 -- =====================================================================
+-- 文章配图
+-- =====================================================================
+
+-- 从正文里提取的图片资源。
+--
+-- 为什么单独建表而不塞进 articles：
+--   一篇文章可能有 0~N 张图，且每张图的下载/上传是**独立的异步过程**
+--   （要下载、要传 RustFS、要重试）。塞进 articles 会让「文章解析」
+--   和「图片传输」两个生命周期耦合 —— 图片下载失败不该导致文章入库失败。
+--
+-- 状态机：pending → downloaded / skipped / failed
+--   pending    已提取 URL，等 worker 下载
+--   downloaded 已上传 RustFS，object_key 有值
+--   skipped    判定为无效图（占位图/图标/1x1 像素），不算失败
+--   failed     下载或上传失败，error 列有原因
+CREATE TABLE IF NOT EXISTS article_images (
+    id            BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    article_id    BIGINT UNSIGNED NOT NULL COMMENT '所属文章',
+    source_id     SMALLINT UNSIGNED NOT NULL COMMENT '冗余自 articles，便于按源统计',
+    url           VARCHAR(768)    NOT NULL COMMENT '图片原始地址（绝对化后）',
+    url_hash      CHAR(40)        NOT NULL COMMENT 'URL 指纹（SHA-256 前 40 位）',
+    ordinal       SMALLINT UNSIGNED NOT NULL DEFAULT 0 COMMENT '在正文中出现的序号，保留原顺序',
+    alt_text      VARCHAR(255)    NOT NULL DEFAULT '' COMMENT 'alt 属性原文',
+    status        VARCHAR(16)     NOT NULL DEFAULT 'pending'
+        COMMENT 'pending=待下载 / downloaded=已存 RustFS / skipped=无效图 / failed=失败',
+    object_key    VARCHAR(512)    NOT NULL DEFAULT '' COMMENT 'RustFS 中的对象键',
+    content_type  VARCHAR(64)     NOT NULL DEFAULT '' COMMENT 'image/jpeg 等',
+    byte_size     INT UNSIGNED    NOT NULL DEFAULT 0,
+    width         SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+    height        SMALLINT UNSIGNED NOT NULL DEFAULT 0,
+    fetched_at_utc DATETIME       NULL COMMENT '下载完成时间',
+    error         VARCHAR(255)    NOT NULL DEFAULT '',
+    created_at    DATETIME        NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    -- 同一篇文章里同一张图只存一条（正文重复引用同一图时去重）
+    UNIQUE KEY uk_img_article_url (article_id, url_hash),
+    -- 全站级去重查询：同一张图被多篇文章引用时，只下载一次
+    KEY idx_img_url_hash (url_hash),
+    KEY idx_img_status (status),
+    KEY idx_img_source (source_id),
+    CONSTRAINT fk_img_article FOREIGN KEY (article_id)
+        REFERENCES articles (id) ON DELETE CASCADE
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4
+  COLLATE = utf8mb4_general_ci COMMENT = '文章正文配图（异步下载并存入 RustFS）';
+
+-- =====================================================================
 -- 视图
 -- =====================================================================
 

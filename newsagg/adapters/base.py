@@ -64,6 +64,10 @@ class DetailParse:
     media_only: bool = False
     #: 是否由 GNE 通用抽取兜底产出（便于统计专用适配器的覆盖率）
     used_fallback: bool = False
+    #: 正文配图（**只存 URL，不下载**）。
+    #: 下载与上传 RustFS 是 worker 的独立异步过程 —— 图片失败不该
+    #: 让文章入库失败，故这里只收集引用。
+    image_refs: list = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -123,6 +127,9 @@ class BaseAdapter(ABC):
     robots_policy: str = "obey"
     #: 是否允许 GNE 兜底
     allow_gne_fallback: bool = True
+    #: 是否从详情页提取正文配图（只收集 URL，下载由 worker 异步做）。
+    #: 默认开 —— 配图是新闻的重要组成；个别站点若 `<img>` 噪声极多可关掉。
+    allow_image_extraction: bool = True
     #: 内容语言（港澳台站点为繁体中文）
     language: str = "zh-CN"
 

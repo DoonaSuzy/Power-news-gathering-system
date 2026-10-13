@@ -203,6 +203,15 @@ class HeuristicAdapter(BaseAdapter):
                     media_only = False
                     used_fallback = True
 
+        # 正文配图：**只收集 URL，不下载**（下载/传 RustFS 是 worker 的独立流程）。
+        # 放在这里而不是各处适配器里 —— 三个类（sgcc/csg/行业）都走这个方法，
+        # 一处接入即可全覆盖。
+        image_refs: list = []
+        if self.allow_image_extraction:
+            from newsagg.images import extract_image_urls
+
+            image_refs = extract_image_urls(html, base_url=url)
+
         return DetailParse(
             title=title,
             paragraphs=paragraphs,
@@ -210,6 +219,7 @@ class HeuristicAdapter(BaseAdapter):
             published_text=published_text,
             media_only=media_only,
             used_fallback=used_fallback,
+            image_refs=image_refs,
         )
 
     # --------------------- 内部工具 ---------------------

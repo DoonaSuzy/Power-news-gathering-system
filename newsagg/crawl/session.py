@@ -226,8 +226,9 @@ class CrawlSession:
         self, *, url: str, url_hash: str, title: str, paragraphs: list[str],
         source_name: str, published_cst, published_utc, time_precision: str,
         content_hash: str, quality_flags: list[str],
+        image_refs: list | None = None,
     ) -> str:
-        """落库一篇文章，返回 upsert 结果（saved / updated / skipped）。"""
+        """落库一篇文章（含配图引用），返回 upsert 结果（saved / updated / skipped）。"""
         conn = self.db.connect()
         try:
             result = self.repo.save_article(
@@ -244,6 +245,20 @@ class CrawlSession:
                 content_hash=content_hash,
                 quality_flags=quality_flags,
             )
+            # 配图登记：**独立于文章 upsert 的结果** ——
+            # 文章可能是 skipped（内容没变），但配图仍可能是新提取的
+            # （比如上次解析时图片规则还没上线），所以这里不看 outcome。
+            if image_refs and result.article_id:
+                try:
+                    self.repo.save_article_images(
+                        conn, article_id=result.article_id,
+                        source_id=self.source_id, refs=image_refs,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    # 配图失败不能连累文章入库 —— 两者生命周期独立
+                    from newsagg.logutil import get_logger as _gl
+
+                    _gl("session").warning("配图登记失败（文章已入库）: %s", exc)
             conn.commit()
         finally:
             conn.close()

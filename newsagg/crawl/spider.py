@@ -310,6 +310,8 @@ class SiteSpider(scrapy.Spider):
             time_precision=(parsed.precision if cst else "unknown"),
             content_hash=content_hash(paragraphs),
             quality_flags=flags,
+            # 配图引用：解析阶段只收集 URL，下载由 worker 异步做
+            image_refs=getattr(detail, "image_refs", None) or [],
         )
 
     # ------------------------------ 守卫与错误 ------------------------------
