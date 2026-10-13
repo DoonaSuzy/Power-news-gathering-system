@@ -91,6 +91,79 @@ def object_key_for(url_hash: str, url: str, *, prefix: str = "articles") -> str:
     return f"{prefix}/{url_hash[:2]}/{url_hash[2:4]}/{url_hash}{ext}"
 
 
+#: 判定为「正文配图」的最小边长（像素）。
+#:
+#: 为什么要按尺寸过滤：实测中国电力新闻网一篇文章提取到的 12 张「配图」里，
+#: 放大镜图标 19×19、手机图标 32×32、头像 20×20、二维码若干 ——
+#: **没有一张是真正的正文图**。路径词表拦不住它们（路径里没有 logo/icon/qr 字样），
+#: 但**尺寸是硬特征**：正文配图不可能只有 19 像素宽。
+#:
+#: 取 100 的依据：实测正文配图多为 250×250 以上；而图标类无一超过 40px。
+MIN_IMAGE_PX = 100
+
+
+def image_dimensions(data: bytes) -> tuple[int, int]:
+    """从图片字节流解析宽高（**零依赖** —— 手解文件头）。
+
+    为什么不用 Pillow：为一个「读两个整数」的需求引入图像库不划算
+    （镜像体积、构建时间、CVE 面都增加）。四种主流格式的头部足够简单。
+
+    Args:
+        data: 图片原始字节。
+
+    Returns:
+        ``(宽, 高)``；无法识别时返回 ``(0, 0)``。
+
+    Note:
+        只支持 PNG / JPEG / GIF / WebP —— 覆盖本项目实测的全部图片来源。
+        其他格式返回 (0,0)，调用方应按「未知尺寸」处理（**不**因此丢弃）。
+    """
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        # IHDR 紧跟 8 字节签名 + 4 字节长度 + 4 字节类型，宽高各 4 字节大端
+        return (int.from_bytes(data[16:20], "big"),
+                int.from_bytes(data[20:24], "big"))
+
+    if data[:2] == b"\xff\xd8":                       # JPEG SOI
+        i = 2
+        n = len(data)
+        while i < n - 9:
+            if data[i] != 0xFF:
+                i += 1
+                continue
+            marker = data[i + 1]
+            # SOF0..SOF3 段里带尺寸（其余 SOF 是差分/算术编码，少见）
+            if marker in (0xC0, 0xC1, 0xC2, 0xC3):
+                h = int.from_bytes(data[i + 5:i + 7], "big")
+                w = int.from_bytes(data[i + 7:i + 9], "big")
+                return w, h
+            if marker in (0xD8, 0xD9) or 0xD0 <= marker <= 0xD7:
+                i += 2                                # 无长度字段的标记
+                continue
+            seg = int.from_bytes(data[i + 2:i + 4], "big")
+            if seg <= 0:
+                break
+            i += 2 + seg
+        return 0, 0
+
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return (int.from_bytes(data[6:8], "little"),
+                int.from_bytes(data[8:10], "little"))
+
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        kind = data[12:16]
+        if kind == b"VP8 ":     # 无损帧头后 2 字节各含 14 位尺寸
+            return (int.from_bytes(data[26:28], "little") & 0x3FFF,
+                    int.from_bytes(data[28:30], "little") & 0x3FFF)
+        if kind == b"VP8L":     # 紧凑位打包：14 位宽 + 14 位高
+            bits = int.from_bytes(data[21:25], "little")
+            return ((bits & 0x3FFF) + 1, ((bits >> 14) & 0x3FFF) + 1)
+        if kind == b"VP8X":     # 扩展格式：24 位宽高（减一）
+            w = int.from_bytes(data[24:27], "little") + 1
+            h = int.from_bytes(data[27:30], "little") + 1
+            return w, h
+    return 0, 0
+
+
 def fetcher_for(settings: Any) -> Any:
     """按配置构造 HTTP 下载器（httpx，统一 trust_env 策略）。
 
@@ -227,12 +300,24 @@ class ImageStore:
                 ext = url.split("?")[0].rsplit(".", 1)
                 ctype = _EXT_CT.get(f".{ext[1].lower()}" if len(ext) == 2 else "", "image/jpeg")
 
+            # 尺寸过滤：**这是拦图标/二维码最有效的一道**。
+            # 路径词表拦不住 19×19 的放大镜图标（路径里没有 logo/icon 字样），
+            # 但正文配图不可能只有 19 像素宽。
+            w, h = image_dimensions(data)
+            if w and h and (w < MIN_IMAGE_PX or h < MIN_IMAGE_PX):
+                return ImageFetchResult(
+                    image_id, "skipped", error=f"too_small:{w}x{h}",
+                    byte_size=len(data), content_type=ctype,
+                    width=w, height=h,
+                )
+
             key = object_key_for(url_hash, url)
             self._client().put_object(
                 Bucket=self.bucket, Key=key, Body=data, ContentType=ctype,
             )
             return ImageFetchResult(image_id, "downloaded", object_key=key,
-                                    byte_size=len(data), content_type=ctype)
+                                    byte_size=len(data), content_type=ctype,
+                                    width=w, height=h)
         except Exception as exc:  # noqa: BLE001
             return ImageFetchResult(image_id, "failed", error=str(exc)[:255])
         finally:
@@ -266,6 +351,7 @@ class ImageStore:
                         conn, image_id=res.image_id, status=res.status,
                         object_key=res.object_key, byte_size=res.byte_size,
                         error=res.error, content_type=res.content_type,
+                        width=res.width, height=res.height,
                     )
                     stats["processed"] += 1
                     stats[res.status] = stats.get(res.status, 0) + 1

@@ -132,3 +132,50 @@ class TestExtraction:
             raise AssertionError("应不可变")
         except (AttributeError, TypeError):
             pass
+
+
+class TestImageDimensions:
+    """零依赖尺寸解析（用于过滤图标/二维码）。"""
+
+    @staticmethod
+    def _png(w: int, h: int) -> bytes:
+        import struct
+        import zlib
+
+        ihdr = struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)
+        return (b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13) + b"IHDR" + ihdr
+                + struct.pack(">I", zlib.crc32(b"IHDR" + ihdr)))
+
+    def test_png(self):
+        from newsagg.imagestore import image_dimensions
+
+        assert image_dimensions(self._png(200, 150)) == (200, 150)
+
+    def test_png_icon_size(self):
+        """实测图标就是这个量级（放大镜 19x19）。"""
+        from newsagg.imagestore import image_dimensions
+
+        assert image_dimensions(self._png(19, 19)) == (19, 19)
+
+    def test_gif(self):
+        from newsagg.imagestore import image_dimensions
+
+        data = b"GIF89a" + (320).to_bytes(2, "little") + (240).to_bytes(2, "little")
+        assert image_dimensions(data) == (320, 240)
+
+    def test_unknown_returns_zero(self):
+        """无法识别时返回 (0,0)，调用方按「未知尺寸」处理而非丢弃。"""
+        from newsagg.imagestore import image_dimensions
+
+        assert image_dimensions(b"not an image at all") == (0, 0)
+
+    def test_empty(self):
+        from newsagg.imagestore import image_dimensions
+
+        assert image_dimensions(b"") == (0, 0)
+
+    def test_min_px_threshold_is_sane(self):
+        """阈值要明显大于图标（≤40px）、小于正文图（≥250px）。"""
+        from newsagg.imagestore import MIN_IMAGE_PX
+
+        assert 40 < MIN_IMAGE_PX < 250

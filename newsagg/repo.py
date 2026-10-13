@@ -275,7 +275,8 @@ class Repository:
 
     def mark_image_fetched(self, conn, *, image_id: int, status: str,
                            object_key: str = "", byte_size: int = 0,
-                           error: str = "", content_type: str = "") -> None:
+                           error: str = "", content_type: str = "",
+                           width: int = 0, height: int = 0) -> None:
         """写配图抓取终态。
 
         Args:
@@ -289,10 +290,10 @@ class Repository:
         with conn.cursor() as cur:
             cur.execute(
                 "UPDATE article_images SET status=%s, object_key=%s, "
-                "byte_size=%s, error=%s, content_type=%s, "
+                "byte_size=%s, error=%s, content_type=%s, width=%s, height=%s, "
                 "fetched_at_utc=UTC_TIMESTAMP() WHERE id=%s",
                 (status, object_key, byte_size, error[:255],
-                 content_type[:64], image_id),
+                 content_type[:64], width, height, image_id),
             )
 
     def images_for_articles(self, conn, article_ids: list[int]) -> dict:
