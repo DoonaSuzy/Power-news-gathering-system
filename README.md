@@ -3,7 +3,7 @@
 > 采集全国 34 个省级行政区的电力新闻与市场行情，并提供统一查询 API 与 AI 摘要能力。
 > 覆盖「采集 → 调度 → 存储 → 监控」全流程。
 
-[![tests](https://img.shields.io/badge/tests-431%20passed-brightgreen)](#-开发)
+[![tests](https://img.shields.io/badge/tests-528%20passed-brightgreen)](#-开发)
 [![python](https://img.shields.io/badge/python-%3E%3D3.11-blue)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)](#-许可)
 
@@ -17,11 +17,12 @@
 
 | 指标 | 值 |
 | --- | ---: |
-| 采集来源 | **54 个**（51 个适配器） |
-| 已入库文章 | **1,274 篇** |
-| Python 代码 | **15,298 行** |
-| 自动化测试 | **431 个（全通过）** |
+| 采集来源 | **60 个**（57 个适配器，59 个启用） |
+| 已入库文章 | **1,707 篇** |
+| Python 代码 | **~16,000 行** |
+| 自动化测试 | **528 个（全通过）** |
 | 中台 API 端点 | **39 个** |
+| 配图资源 | **680 张**（RustFS 265 MB） |
 | 气象数据表 | **24 张**（8 大区 × 3 数据产品） |
 
 ### 核心能力
@@ -116,6 +117,72 @@ Power News Aggregator/
 ```
 
 ---
+
+## 🌐 访问地址（实测可用）
+
+> 全部地址于 **2026-10-13 21:10** 实测；状态列为当时的 HTTP 状态码。
+> 主机：`192.168.101.84`（Ubuntu 22.04）—— 9 个容器全部 `Up`
+
+### 生产环境（192.168.101.84）
+
+| 服务 | 地址 | 状态 | 说明 |
+| --- | --- | --- | --- |
+| **数据中台 API** | http://192.168.101.84:8080 | ✅ 200 | 39 个端点，除健康检查外需 Bearer Token |
+| **Swagger 文档** | http://192.168.101.84:8080/docs | ✅ 200 | 可交互调试（已修 Authorize 按钮） |
+| **ReDoc 文档** | http://192.168.101.84:8080/redoc | ✅ 200 | 阅读版 API 文档 |
+| **健康检查** | http://192.168.101.84:8080/api/v1/health | ✅ 200 | **免鉴权**，探活首选 |
+| **Prometheus 指标** | http://192.168.101.84:8080/metrics | ✅ 200 | 应用侧指标（scrape 目标） |
+| **Grafana 看板** | http://192.168.101.84:3000 | ✅ 200 | 已中文化（`zh-Hans`），11 个面板 |
+| **Prometheus** | http://192.168.101.84:9090 | ✅ 200 | 指标存储 + 4 条告警规则 |
+| **RustFS 管理台** | http://192.168.101.84:9001 | 🔒 需登录 | 对象存储控制台（配图存储） |
+| **RustFS S3 端点** | http://192.168.101.84:9000 | 🔒 403 | S3 兼容 API（根路径无权限属正常） |
+| **浏览器 CDP 通道** | ws://192.168.101.84:3010 | ✅ 200 | Playwright CDP（过瑞数 412 用） |
+| MySQL | 192.168.101.84:3306 | — | 采集库 `power_news` + 中台库 `powernews_platform` |
+| SSH | ssh://zhu@192.168.101.84:22 | — | 运维入口 |
+
+**配图直链格式**：`http://192.168.101.84:9000/powernews-images/<object_key>`
+（如 `articles/a2/72/a2720e62....png`）—— 桶已设公开读策略，可直接访问。
+
+### 前端
+
+| 场景 | 地址 | 启动方式 |
+| --- | --- | --- |
+| **开发服务器**（连 84 中台） | http://127.0.0.1:5173 | `cd web && VITE_API_TARGET=http://192.168.101.84:8080 npx vite` |
+| 构建产物预览 | http://127.0.0.1:4173 | `cd web && npx vite preview` |
+| 本地中台（独立开发） | http://127.0.0.1:8123 | `python -m uvicorn newsplatform.main:app --port 8123` |
+
+> 前端开发时中台必须可达，否则页面顶部会显示「中台不可达」。
+
+### 关键 API 端点
+
+| 端点 | 用途 | 鉴权 |
+| --- | --- | --- |
+| `GET /api/v1/health` | 健康检查（探活首选） | **免** |
+| `GET /api/v1/articles` | 文章列表（分页 / 时间窗 / 省份 / 类别筛选） | 需 |
+| `GET /api/v1/articles/{id}` | 文章详情（正文 + **配图 `images[]`**） | 需 |
+| `GET /api/v1/articles/count` | 命中条数（导出前预览） | 需 |
+| `GET /api/v1/articles/export` | 导出 CSV（UTF-8 BOM） | 需 |
+| `GET /api/v1/sources` | 来源清单（含生效配置） | 需 |
+| `GET /api/v1/stats/*` | 统计（覆盖 / 时序 / 快照） | 需 |
+| `GET /api/v1/news/summary` | AI 摘要（服务端缓存） | 需 |
+| `GET /metrics` | Prometheus 指标 | **免** |
+| `GET /docs` · `/redoc` | API 文档 | **免** |
+
+### ⚠️ 访问两个坑
+
+1. **本机有 HTTP 代理** → `curl 127.0.0.1` / `curl 192.168.101.84` 默认走代理，
+   返回 **502**（看着像服务挂了，实际是代理拦的）。
+   - 命令行：必须加 `--noproxy '*'`
+   - 浏览器：在代理设置里排除 `127.0.0.1` / `localhost` / `192.168.101.84`
+   - Python（httpx）：`trust_env=False` 或清空 `HTTP_PROXY`
+2. **除健康检查与文档外都需 Bearer Token**：
+   ```
+   Authorization: Bearer pn_xxxxxxxx
+   ```
+   令牌从 `.env` 的引导配置获取，或查中台库 `api_keys` 表。
+
+---
+
 
 ## 🚀 环境配置
 
