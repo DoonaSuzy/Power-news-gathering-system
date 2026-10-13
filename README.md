@@ -145,11 +145,25 @@ Power News Aggregator/
 
 ### 前端
 
-| 场景 | 地址 | 启动方式 |
+**生产环境：已由中台托管** —— 直接访问 `http://192.168.101.84:8080/` 即为前端页面。
+
+| 场景 | 地址 | 说明 |
 | --- | --- | --- |
-| **开发服务器**（连 84 中台） | http://127.0.0.1:5173 | `cd web && VITE_API_TARGET=http://192.168.101.84:8080 npx vite` |
+| **生产（84）** | **http://192.168.101.84:8080/** | 中台 `StaticFiles` 托管 `web/dist`，**同域免 CORS** |
+| 开发服务器 | http://127.0.0.1:5173 | `cd web && VITE_API_TARGET=http://192.168.101.84:8080 npx vite` |
 | 构建产物预览 | http://127.0.0.1:4173 | `cd web && npx vite preview` |
-| 本地中台（独立开发） | http://127.0.0.1:8123 | `python -m uvicorn newsplatform.main:app --port 8123` |
+| 本地中台 | http://127.0.0.1:8123 | 独立开发用 |
+
+**为什么由中台托管而不是单独起 Nginx**：
+1. **同域** → 前端 `/api/v1/...` 直接命中同源路由，天然免 CORS；
+2. **不引新镜像** → 84 拉 Docker Hub 极慢（实测 `nginx:alpine` 三分钟没下来）；
+3. **一个入口** → 用户只记 8080 一个端口。
+
+**SPA 路由**由 `newsplatform/main.py` 的 `_SPAStaticFiles` 处理：
+访问 `/some/route` 时磁盘上不存在该文件 → **回退到 `index.html`** 交给前端路由。
+
+> ⚠️ `web/dist` 是构建产物、**不入版本库** → 部署时需**单独传输**
+> （`git archive` 打不出来）。
 
 > 前端开发时中台必须可达，否则页面顶部会显示「中台不可达」。
 
