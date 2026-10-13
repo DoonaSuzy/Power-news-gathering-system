@@ -181,6 +181,38 @@ class Repository:
                 return None
             return int(cur.lastrowid)
 
+    def reap_stale_jobs(self, conn, *, older_than_seconds: int) -> int:
+        """回收**僵死的 running 任务**（进程已死但状态没落终态）。
+
+        为什么必须有这个：任务状态是「先置 running，跑完再落终态」。
+        若 worker 进程被 kill（容器重启 / OOM / 手工 docker kill），
+        状态就**永远停在 running**，而 `sources` 的可用性判断会因此
+        认为「该源正在跑」→ **再也不会为它建新批**。
+
+        84 生产上实测到过：bjx 被卡 14 小时、浙江/湖北各卡 2 小时，
+        期间这三个源完全停止采集，且日志里毫无异常提示。
+
+        Note:
+            阈值应 **> 单任务最长耗时**（`lease_seconds`，默认 900s）。
+            这里由调用方传 2 倍租约，避免把「跑得慢的正常任务」误杀。
+
+        Args:
+            conn: 数据库连接。
+            older_than_seconds: 超过该秒数仍为 running 的判为僵死。
+
+        Returns:
+            被回收的任务数。
+        """
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE crawl_jobs SET status='failed', "
+                "stop_reason='stale_job_reaped', finished_at_utc=UTC_TIMESTAMP() "
+                "WHERE status='running' "
+                "AND started_at_utc < DATE_SUB(UTC_TIMESTAMP(), INTERVAL %s SECOND)",
+                (older_than_seconds,),
+            )
+            return int(cur.rowcount or 0)
+
     def finish_run(self, conn, run_id: int, job_count: int) -> None:
         with conn.cursor() as cur:
             cur.execute(

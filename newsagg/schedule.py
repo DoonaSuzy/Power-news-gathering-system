@@ -108,6 +108,18 @@ def run_coordinator(*, force: bool = False, dry_run: bool = False,
     job_ids: list[int] = []
     considered = 0
     try:
+        # 先回收僵死任务 —— 必须在建批**之前**做。
+        # 否则那些被卡住的源会被「正在跑」挡住，永远建不出新批
+        # （84 生产实测：bjx 卡 14h、浙江/湖北各卡 2h，期间完全停采且无告警）。
+        # 阈值取 2 倍租约，避免误杀跑得慢的正常任务。
+        try:
+            reaped = repo.reap_stale_jobs(conn, older_than_seconds=settings.lease_seconds * 2)
+            if reaped:
+                conn.commit()
+                log.warning("回收僵死任务 %d 个（进程已死但状态停在 running）", reaped)
+        except Exception as exc:  # noqa: BLE001
+            log.error("回收僵死任务失败（不影响本轮协调）: %s", exc)
+
         run_id = repo.create_run(conn, trigger)
         sources = repo.list_sources(conn, enabled_only=True)
         considered = len(sources)
