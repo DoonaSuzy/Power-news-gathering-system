@@ -66,6 +66,9 @@ _NOISE_WORDS = (
     "dianzan", "shoucang",
     # --- 实测漏网之鱼（从 failed 样本里发现的）---
     "jiucuo",       # 纠错按钮（政府站标配，实测 `/exposure/images/jiucuo.png`）
+    # 跨文章统计又发现两个（被 91 篇/51 篇引用的公共元素）：
+    "_qr",          # 以 `_qr` 结尾的二维码图（实测 nengyuanjie 的 `index_qr`）
+    "nouserpic",    # "无头像/无图"占位图（实测 chinapower 的 `nouserpic.gif`，被 51 篇引用）
     "jiubian",      # 举报/纠编
     "wap", "app_dl", "download",
     # 二维码生成服务（动态 API，抓下来也是二维码不是正文图）

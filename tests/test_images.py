@@ -179,3 +179,29 @@ class TestImageDimensions:
         from newsagg.imagestore import MIN_IMAGE_PX
 
         assert 40 < MIN_IMAGE_PX < 250
+
+
+class TestCrossArticleNoise:
+    """跨文章公共元素（二维码/占位图）—— 实测被 91 篇/51 篇引用的两类。"""
+
+    def test_qr_suffix_url(self):
+        """`index_qr` 结尾 —— 词表此前只拦 qrcode/qr_code/qr-，漏了这个。"""
+        from newsagg.images import is_probably_noise_url
+
+        assert is_probably_noise_url(
+            "https://www.nengyuanjie.net/statics/images/cpu/images/index_qr")
+
+    def test_nouserpic_placeholder(self):
+        """“无图”占位图（nouserpic.gif）—— 被实测 51 篇文章引用。"""
+        from newsagg.images import is_probably_noise_url
+
+        assert is_probably_noise_url(
+            "http://mm.chinapower.com.cn/e/data/images/nouserpic.gif")
+
+    def test_min_refs_constant_consistent(self):
+        """跨文章阈值（store 里 ≥3）与文档口径一致。"""
+        import inspect
+
+        from newsagg.imagestore import ImageStore
+        src = inspect.getsource(ImageStore._is_common_image)
+        assert "min_refs: int = 3" in src

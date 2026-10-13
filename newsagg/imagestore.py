@@ -265,6 +265,35 @@ class ImageStore:
                     raise
 
     # ------------------------------------------------------------------
+    def _is_common_image(self, conn, url_hash: str, *, min_refs: int = 3) -> bool:
+        """跨文章公共元素判定：同一 URL 已被 ``min_refs`` 篇文章引用。
+
+        ## 为什么这是拦「重复配图」的根本解法
+
+        站点详情页的**模板公共元素**（二维码/装饰图/占位图）会出现在
+        **每一篇**详情页里。路径词表拦不住（URL 里可能没有关键词），
+        尺寸过滤也拦不住（有些公共图恰好是大图，如 836KB 的横幅）。
+
+        但它们有一个铁的特征：**被大量文章引用**。
+        正文配图几乎不可能被 3 篇以上文章共用同一 URL。
+
+        Args:
+            conn: 数据库连接（读引用计数）。
+            url_hash: 图片 URL 指纹。
+            min_refs: 引用阈值。
+
+        Returns:
+            True 表示是站点公共元素，应跳过。
+        """
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT COUNT(DISTINCT article_id) FROM article_images "
+                "WHERE url_hash=%s",
+                (url_hash,),
+            )
+            n = (cur.fetchone() or [0])[0]
+        return int(n or 0) >= min_refs
+
     def fetch_one(self, *, image_id: int, url: str, url_hash: str,
                   client: Any | None = None) -> ImageFetchResult:
         """下载单张图并上传 RustFS。
@@ -349,6 +378,16 @@ class ImageStore:
         try:
             with fetcher_for(self.settings) as client:
                 for r in rows:
+                    # 跨文章公共元素过滤：**下载之前**就拦下（省流量）。
+                    # 注意要在同一事务连接上查 —— conn 是本批的事务连接。
+                    if self._is_common_image(conn, r["url_hash"]):
+                        self.repo.mark_image_fetched(
+                            conn, image_id=r["id"], status="skipped",
+                            error="common_element:ref>=3",
+                        )
+                        stats["processed"] += 1
+                        stats["skipped"] = stats.get("skipped", 0) + 1
+                        continue
                     res = self.fetch_one(
                         image_id=r["id"], url=r["url"],
                         url_hash=r["url_hash"], client=client,
