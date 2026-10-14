@@ -3,7 +3,7 @@
 > 采集全国 34 个省级行政区的电力新闻与市场行情，并提供统一查询 API 与 AI 摘要能力。
 > 覆盖「采集 → 调度 → 存储 → 监控」全流程。
 
-[![tests](https://img.shields.io/badge/tests-528%20passed-brightgreen)](#-开发)
+[![tests](https://img.shields.io/badge/tests-620%20passed-brightgreen)](#-开发)
 [![python](https://img.shields.io/badge/python-%3E%3D3.11-blue)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)](#-许可)
 
@@ -19,17 +19,32 @@
 | --- | ---: |
 | 采集来源 | **60 个**（57 个适配器，59 个启用） |
 | 已入库文章 | **1,707 篇** |
-| Python 代码 | **~16,000 行** |
-| 自动化测试 | **528 个（全通过）** |
-| 中台 API 端点 | **39 个** |
-| 配图资源 | **680 张**（RustFS 265 MB） |
-| 气象数据表 | **24 张**（8 大区 × 3 数据产品） |
+| Python 代码 | **15,149 行**（`newsplatform/` + `powersdk/` 非空行） |
+| 自动化测试 | **620 个（全通过）**（口径见下注） |
+| 中台 API 端点 | **40 个**（口径见下注） |
+| 配图资源 | **120 张**（跨文章公共元素过滤后；治理前 680 张 / 265 MB） |
+| 气象数据表 | **26 张**（24 业务表 = 8 大区 × 3 数据产品，+ `wx_stations` / `wx_ingest_progress` 2 张辅助表） |
+
+> **端点口径**（2026-10-15 实测，可复现）：`app.routes` 共 46 个 route object =
+> 4 个框架路由（`/docs`、`/docs/oauth2-redirect`、`/redoc`、`/api/v1/openapi.json`）+
+> 2 个非业务 APIRoute（`/metrics`、前端指路牌 `/`）+ **40 个业务端点**（`newsplatform/api/v1/`，10 个路由模块）。
+> 唯一路径 **36 条**（`/sources`、`/sources/{source_id}`、`/admin/api-keys` 各有多个方法）。
+> 复现：`python -c "from newsplatform.main import app; print(len(app.routes))"`。
+>
+> **测试口径**（2026-10-15 实测，可复现）：`pyproject.toml:63` 的 `testpaths` 含四个目录 ——
+> `tests/` **540** + `powersdk/tests` 49 + `newsagg/finance/tests` 22 + `newsplatform/tests` 9 = **620**。
+> 旧口径 580 只算了前两个目录（`cf877e9`「收回仅存在于虚拟机上的三批成果」把金融爬虫与监控体系并入仓库后未同步）；
+> 611 → 620 是 2026-10-15 新增 `tests/test_sources_seed.py`（9 例，来源清单守卫回归）。
+> 复现：`python -m pytest --junitxml=.pytest.xml`（`-q` 的 summary 行抓不到计数，必须用 junitxml）。
+>
+> **代码量口径**：`newsplatform/` 7,898 + `powersdk/` 4,833 = 15,149 非空行；
+> 若含采集层 `newsagg/` 与 `scripts/` 则为 **38,773 行**（全仓 `.py` 总行 52,732）。
 
 ### 核心能力
 
-- **多源采集**：Scrapy 框架 + 51 个站点适配器，含反爬中间件、robots 合规、限速与租约调度
+- **多源采集**：Scrapy 框架 + 57 个站点适配器，含反爬中间件、robots 合规、限速与租约调度
 - **分布式调度**：Redis Stream 任务队列 + 租约心跳 + 三重预算熔断
-- **数据中台**：FastAPI 提供 39 个端点（文章 / 来源 / 统计 / 摘要 / 行情 / 气象 / 公告）
+- **数据中台**：FastAPI 提供 40 个端点（文章 / 来源 / 统计 / 摘要 / 行情 / 气象 / 公告）
 - **AI 摘要**：服务端预生成 + 缓存 + 定时刷新（LLM 调用与访客量解耦）
 - **市场行情**：6 个数据集（LNG 现货 / 挂牌 / 信号、ceci 进口煤 / PMMI、电力现货）
 - **气象数据**：Open-Meteo 2,875 个站点，含配额核算与限流退避
@@ -49,7 +64,7 @@
 | 组件 | 版本 | 用途 |
 | --- | --- | --- |
 | **Python** | **≥ 3.11** | 运行环境（生产用 3.12） |
-| **FastAPI** | **0.115.6** | REST API 框架（39 个端点） |
+| **FastAPI** | **0.115.6** | REST API 框架（40 个端点） |
 | **Uvicorn[standard]** | **0.34.0** | ASGI 服务器 |
 | **Pydantic** | **2.10.4** | 请求/响应校验（v2 风格） |
 | **pydantic-settings** | **2.7.0** | 配置管理（12-factor） |
@@ -103,7 +118,7 @@
 | 工具 | 版本 | 用途 |
 | --- | --- | --- |
 | **Ruff** | **0.17.0** | Lint + Format（替代 black/isort/flake8） |
-| **pytest** | **9.1.1** | 单元测试（**528 个**） |
+| **pytest** | **9.1.1** | 单元测试（**620 个**） |
 | **pytest-asyncio** | **1.4.0** | 异步测试支持 |
 | **fakeredis** | **2.39.0** | Redis 测试替身（测试**不需要真 Redis**） |
 | **freezegun** | **1.5.1** | 时间冻结（时间窗口逻辑测试） |
@@ -116,7 +131,7 @@ Scrapy 采集 → Redis Stream 队列 → Worker 消费 → MySQL 落库
                                       ↓
                           图片异步下载 → RustFS
                                       ↓
-                    FastAPI 中台（39 端点）→ Vue3 前端（同域托管）
+                    FastAPI 中台（40 端点）→ Vue3 前端（同域托管）
                                       ↓
                         Prometheus + Grafana 监控
 ```
@@ -132,7 +147,7 @@ Scrapy 采集 → Redis Stream 队列 → Worker 消费 → MySQL 落库
 ```
 Power News Aggregator/
 ├── newsagg/                      # 采集层（Scrapy 框架 + 适配器 + 数据清洗）
-│   ├── adapters/                 # 51 个站点适配器（按省份/类型分目录）
+│   ├── adapters/                 # 57 个站点适配器（按省份/类型分目录）
 │   │   ├── base.py               #   BaseAdapter 抽象契约
 │   │   ├── _common.py            #   HeuristicAdapter 通用启发式
 │   │   ├── sgcc_generic.py       #   国网站群模板 + build_sgcc_adapter()
@@ -143,7 +158,7 @@ Power News Aggregator/
 │   │   └── <省份拼音>/            #   各省国网/南网公司
 │   ├── crawl/                    # Scrapy 蜘蛛、引擎、中间件、租约、去重
 │   ├── market/                   # 市场行情采集（6 个数据集）
-│   ├── weather/                  # 气象数据采集（24 张表）
+│   ├── weather/                  # 气象数据采集（26 张表）
 │   ├── cleaning.py               # 正文清洗 / 时间解析 / 质量标记
 │   ├── rawstore.py               # 原始响应落盘层（重洗的基础）
 │   ├── export.py                 # CSV 导出（含版本标识）
@@ -153,7 +168,7 @@ Power News Aggregator/
 │   └── cli.py                    # 命令行入口
 │
 ├── newsplatform/                 # 数据中台（FastAPI）
-│   ├── api/v1/                   # 39 个端点（12 个模块）
+│   ├── api/v1/                   # 40 个端点（10 个路由模块）
 │   ├── core/                     # 配置 / 鉴权 / 限流 / 审计 / 缓存 / 指标
 │   ├── models/                   # ORM 模型
 │   ├── repositories/             # 数据访问层
@@ -169,12 +184,13 @@ Power News Aggregator/
 │   ├── parsing.py                #   JSON 解析 + 时间戳补全
 │   ├── pinyin.py                 #   地区索引（中文/拼音/缩写/区划码）
 │   ├── http_source.py            #   数据源抽象（内存/MySQL/fake）
+│   ├── tests/                    #   测试（49 个）
 │   └── README.md                 #   SDK 独立文档
 │
 ├── web/                          # 前端（Vue 3 + Vite）
 │   └── src/{components,composables,api,utils,styles}/
 │
-├── scripts/                      # 31 个辅助脚本
+├── scripts/                      # 43 个辅助脚本（41 .py + 2 .sh）
 │   ├── site_inventory.py         #   站点采集清单 + 口径验算
 │   ├── crawl_report.py           #   采集报告 + 结构化导出
 │   ├── sync_sources.py           #   来源清单同步到库
@@ -184,8 +200,8 @@ Power News Aggregator/
 │   └── e2e_smoke.py              #   中台接口冒烟
 │
 ├── sql/                          # 建表 SQL（schema.sql 等）
-├── tests/                        # 测试（431 个）
-├── docs/                         # 文档（20+ 篇）
+├── tests/                        # 测试（531 个）
+├── docs/                         # 文档（75 份，含 34 份省级攻克日志；按 .gitignore 不入库）
 │   ├── 数据中台运行手册.md
 │   ├── 省份攻克日志/              #   按省份归档的采集攻克过程
 │   ├── 采集器全量清单.md
@@ -198,7 +214,7 @@ Power News Aggregator/
 │   ├── csv/                      #   CSV 双输出产物
 │   └── collected/                #   浏览器采集中间产物
 │
-├── docker-compose.yml            # 8 个服务编排（mysql/redis/fastapi/scheduler/worker/backfill/prometheus/grafana）
+├── docker-compose.yml            # 10 个服务编排（mysql/redis/fastapi/scheduler/worker/backfill/prometheus/grafana/rustfs/browser）
 ├── pyproject.toml                # 项目元信息 + 依赖 + Ruff/pytest 配置
 ├── requirements.txt              # 采集层依赖
 └── .env.example                  # 环境变量模板
@@ -209,13 +225,13 @@ Power News Aggregator/
 ## 🌐 访问地址（实测可用）
 
 > 全部地址于 **2026-10-13 21:10** 实测；状态列为当时的 HTTP 状态码。
-> 主机：`192.168.101.84`（Ubuntu 22.04）—— 9 个容器全部 `Up`
+> 主机：`192.168.101.84`（Ubuntu 22.04）—— 9 个容器全部 `Up`（第 10 个服务 `backfill` 属 `backfill` profile，按需启动，非常驻）
 
 ### 生产环境（192.168.101.84）
 
 | 服务 | 地址 | 状态 | 说明 |
 | --- | --- | --- | --- |
-| **数据中台 API** | http://192.168.101.84:8080 | ✅ 200 | 39 个端点，除健康检查外需 Bearer Token |
+| **数据中台 API** | http://192.168.101.84:8080 | ✅ 200 | 40 个端点，除健康检查外需 Bearer Token |
 | **Swagger 文档** | http://192.168.101.84:8080/docs | ✅ 200 | 可交互调试（已修 Authorize 按钮） |
 | **ReDoc 文档** | http://192.168.101.84:8080/redoc | ✅ 200 | 阅读版 API 文档 |
 | **健康检查** | http://192.168.101.84:8080/api/v1/health | ✅ 200 | **免鉴权**，探活首选 |
@@ -473,7 +489,7 @@ print(df.head())
 # ① 静态检查（期望 All checks passed!）
 ruff check .
 
-# ② 单元测试（期望 431 passed；**必须用 python -m pytest**）
+# ② 单元测试（期望 531 passed；SDK 另有 49 个，见 powersdk/tests）
 python -m pytest tests -q
 
 # ③ 来源清单与适配器一致性
@@ -510,28 +526,28 @@ NO_PROXY=127.0.0.1,localhost HTTP_PROXY= HTTPS_PROXY= \
 
 | 模块 | 状态 |
 | --- | --- |
-| 采集框架（Scrapy + 租约调度 + 去重） | ✅ 51 个适配器 |
+| 采集框架（Scrapy + 租约调度 + 去重） | ✅ 57 个适配器 |
 | **原始响应落盘层**（`newsagg/rawstore.py`） | ✅ **已实现**（`POWERNEWS_KEEP_RAW=true` 开启） |
 | **重洗工具**（`scripts/rewash.py`） | ✅ **已实现**（改规则重跑解析，不重抓） |
-| 数据中台（FastAPI） | ✅ 39 个端点 |
+| 数据中台（FastAPI） | ✅ 40 个端点 |
 | 市场行情（6 个数据集） | ✅ |
-| 气象数据（24 张表 / 2,875 站点） | ✅ |
+| 气象数据（26 张表 / 2,875 站点） | ✅ |
 | AI 公告栏（服务端预生成 + 缓存 + 定时刷新） | ✅ |
 | CSV 双输出（含版本标识 + 索引） | ✅ |
 | 前端（Vue 3） | ✅ |
-| 部署（Docker Compose 8 服务） | ✅ |
+| 部署（Docker Compose 10 服务） | ✅ |
 | 监控（Prometheus + Grafana + 预置看板） | ✅ |
-| 测试（431 个） | ✅ 全通过 |
-| 文档（20+ 篇） | ✅ |
+| 图片对象存储（RustFS，S3 兼容；配图经四层过滤） | ✅ |
+| 港澳台 3 源（中华电力 / 澳电 / 台电） | ✅ |
+| 测试（620 个） | ✅ 全通过 |
+| 文档（75 份） | ✅ |
 
 ### ⏳ 待开发
 
 | 优先级 | 项 | 说明 |
 | --- | --- | --- |
-| P2 | MinIO 图片存储 | 目前只做文本存储 |
-| P2 | 节点注册表 | 有租约 + 心跳，无节点清单视图 |
-| P2 | 港澳台 3 源适配 | 澳门 / 香港 / 台湾电网公司 |
-| P2 | 中国华能适配器 | 该站列表为 JS 渲染 |
+| P2 | 中国华能列表页 | Liferay 门户，列表 JS 渲染（静态抓取 0 条），待走浏览器通道或定位数据接口 |
+| P2 | 节点注册表 | 有租约 + 心跳续租，无节点清单 / 容量视图 |
 
 ### 📌 已知风险
 
@@ -547,7 +563,7 @@ NO_PROXY=127.0.0.1,localhost HTTP_PROXY= HTTPS_PROXY= \
 | `docs/数据中台运行手册.md` | 部署 / 运维 / 排查 |
 | `docs/数据中台表设计.md` | 数据库表结构 |
 | `docs/项目进度总结报告.md` | 各模块进展与待办（对照简历） |
-| `docs/采集器全量清单.md` | 51 个适配器 + 源文件路径 |
+| `docs/采集器全量清单.md` | 57 个适配器 + 源文件路径 |
 | `docs/爬虫数据存储方案对比.md` | 先落盘 vs 先入库的取舍 |
 | `docs/分表存储方案设计与可行性评估.md` | 分表方案设计与实测评估 |
 | `docs/采集CSV双输出说明.md` | CSV 双输出 + 版本标识机制 |

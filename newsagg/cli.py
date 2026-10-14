@@ -279,6 +279,7 @@ def cmd_validate(_args: argparse.Namespace) -> int:
     """离线校验省字典与来源清单（不连库）。"""
     from newsagg.provinces import MAINLAND_COUNT, PROVINCES, TOTAL_COUNT
     from newsagg.sources_seed import (
+        ALL_SOURCES,
         SOURCE_BY_ID,
         SOURCES,
         count_by_category,
@@ -291,7 +292,10 @@ def cmd_validate(_args: argparse.Namespace) -> int:
 
     _out("")
     _out("== 来源清单 ==")
-    _out(f"  来源总数 : {len(SOURCES)}")
+    # 两个数都要报：基础清单（SOURCES，seed_sources 只灌这些）与含补充源的
+    # 全量清单（ALL_SOURCES）。只报一个时，下面的「分类分布」会把两者对不上。
+    _out(f"  基础清单 : {len(SOURCES)} 条（SOURCES）")
+    _out(f"  含补充源 : {len(ALL_SOURCES)} 条（ALL_SOURCES）")
     _out(f"  分类分布 : {count_by_category()}")
     _out(f"  覆盖省级代码数 : {len(coverage_codes())}")
     _out(f"  唯一 id 数     : {len(SOURCE_BY_ID)}")

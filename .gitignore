@@ -79,6 +79,9 @@ docs/
 data/reports/
 
 
+# pytest junitxml 产物（测试计数用，不入库）
+.pytest*.xml
+
 # 运行期数据整体不入库（2026-10-13 部署前清理）
 # 曾有 112 个 data/power_news/<省份>/<站点>/articles.csv|json 被 git 跟踪 ——
 # 那是早期一次性脚本的产物，属运行期数据，不该进版本库。

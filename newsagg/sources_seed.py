@@ -1,14 +1,21 @@
-"""电力新闻来源种子数据（39 条），严格对应《国家电网覆盖省份（27个）》§8。
+"""电力新闻来源种子数据（``SOURCES`` 40 条 + ``ADDITIONAL_SOURCES`` 20 条 = 60 条）。
 
-来源清单文档给出的 ``SOURCES`` 列表共 39 条，分五类：
+严格对应《国家电网覆盖省份（27个）》§8。基础清单 ``SOURCES`` 共 40 条，分五类：
 
 | 类别 | 条数 | 说明 |
 |---|---|---|
 | ``sgcc`` | 27 | 国家电网省级公司官网新闻中心 |
-| ``csg`` | 5 | 南方电网省级公司（广东/广西/云南/贵州/海南） |
+| ``csg`` | 6 | 南方电网省级公司（广东/广西/云南/贵州/海南 + 集团总部 ``csg_hq``） |
 | ``independent`` | 1 | 内蒙古电力（集团）—— 独立电网，与国网蒙东并存 |
 | ``hmt`` | 3 | 香港/澳门/台湾电力公司官网 |
 | ``industry`` | 3 | 全国性行业媒体（按省份标签聚合） |
+
+``csg_hq``（南方电网集团总部）的 robots.txt 全站 Disallow，因此 ``enabled=False``；
+条目**刻意保留**用于留痕（证明评估过、站点明确拒绝），不计入「未纳入」也不删除。
+
+``ADDITIONAL_SOURCES`` 另 20 条是补充源（``gov`` 12 + ``industry`` 3 + ``independent`` 5），
+**不占用**基础清单的额度；两表合并即 ``ALL_SOURCES``（60 条）。新增来源后需
+``python scripts/sync_sources.py`` 同步进库 —— ``seed_sources`` 只灌 ``SOURCES``。
 
 **关键覆盖说明（来自来源清单文档）**：
 
@@ -377,8 +384,11 @@ def validate() -> list[str]:
     校验项：
     1. 来源 id 唯一；
     2. ``province_code`` 若存在，必须是 34 省字典中的合法代码；
-    3. 原始清单保持 39 条（``SOURCES``），补充来源不占用此额度；
-    4. 五类别的条数与文档 §九 汇总表一致。
+    3. 原始清单保持 40 条（``SOURCES``），补充来源不占用此额度；
+       40 = 27 国网 + 6 南网 + 1 独立 + 3 港澳台 + 3 行业；其中 ``csg_hq`` 因
+       robots.txt 全站 Disallow 而 ``enabled=False``，保留条目是为了留痕。
+    4. 五类别的条数与文档 §九 汇总表一致（只校验 ``SOURCES``；``gov`` 类
+       全在 ``ADDITIONAL_SOURCES``，不占此额度）。
     """
     from newsagg.provinces import PROVINCE_BY_CODE
 
@@ -392,13 +402,17 @@ def validate() -> list[str]:
 
     for s in ALL_SOURCES:
         code = s["province_code"]
-        if code is not None and code not in PROVINCE_BY_CODE:
+        # 行业站 / 全国站用 "" 表示「无省份」（DDL 允许 NULL，种子清单用空串）。
+        # 旧写法只判 ``is not None``，把空串当合法省份放过去了 —— csg_hq 因此
+        # 长期误报，掩盖了真正的越界代码。
+        if code and code not in PROVINCE_BY_CODE:
             problems.append(f"{s['id']} 的 province_code={code} 不在 34 省字典中")
 
-    if len(SOURCES) != 39:
-        problems.append(f"原始来源总数应为 39，实际 {len(SOURCES)}")
+    if len(SOURCES) != 40:
+        problems.append(f"原始来源总数应为 40，实际 {len(SOURCES)}")
 
-    expected = {"sgcc": 27, "csg": 5, "independent": 1, "hmt": 3, "industry": 3}
+    # 基础清单（SOURCES）的类别条数；gov 类全在 ADDITIONAL_SOURCES，不占此额度。
+    expected = {"sgcc": 27, "csg": 6, "independent": 1, "hmt": 3, "industry": 3}
     base_counts: dict[str, int] = {}
     for s in SOURCES:
         base_counts[s["category"]] = base_counts.get(s["category"], 0) + 1
