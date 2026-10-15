@@ -18,7 +18,7 @@
 | 指标 | 值 |
 | --- | ---: |
 | 采集来源 | **60 个**（57 个适配器，59 个启用） |
-| 已入库文章 | **1,707 篇** |
+| 已入库文章 | **1,707 篇**（84 生产库；本机 dev 库 1,274，口径见下注） |
 | Python 代码 | **15,149 行**（`newsplatform/` + `powersdk/` 非空行） |
 | 自动化测试 | **620 个（全通过）**（口径见下注） |
 | 中台 API 端点 | **40 个**（口径见下注） |
@@ -36,6 +36,10 @@
 > 旧口径 580 只算了前两个目录（`cf877e9`「收回仅存在于虚拟机上的三批成果」把金融爬虫与监控体系并入仓库后未同步）；
 > 611 → 620 是 2026-10-15 新增 `tests/test_sources_seed.py`（9 例，来源清单守卫回归）。
 > 复现：`python -m pytest --junitxml=.pytest.xml`（`-q` 的 summary 行抓不到计数，必须用 junitxml）。
+>
+> **文章数口径**（2026-10-16 实测，可复现）：上表 **1,707 篇**取 **84 生产库**；
+> 本机开发库为 **1,274 篇**（`python scripts/site_inventory.py`，脚本末尾自动闭合验算）。
+> **演示对外数字前先确认连的是哪个库**，否则当场对不上。
 >
 > **代码量口径**：`newsplatform/` 7,898 + `powersdk/` 4,833 = 15,149 非空行；
 > 若含采集层 `newsagg/` 与 `scripts/` 则为 **38,773 行**（全仓 `.py` 总行 52,732）。
@@ -489,8 +493,12 @@ print(df.head())
 # ① 静态检查（期望 All checks passed!）
 ruff check .
 
-# ② 单元测试（期望 531 passed；SDK 另有 49 个，见 powersdk/tests）
+# ② 单元测试：仅 tests/ 目录期望 540 passed
 python -m pytest tests -q
+
+#    四个 testpaths 全量期望 620 passed（tests/ 540 + powersdk/tests 49
+#    + newsagg/finance/tests 22 + newsplatform/tests 9）
+python -m pytest --junitxml=.pytest.xml
 
 # ③ 来源清单与适配器一致性
 python -m newsagg validate
