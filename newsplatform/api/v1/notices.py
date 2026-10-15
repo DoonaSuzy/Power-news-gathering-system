@@ -6,8 +6,12 @@
 端点
 ----
 - ``GET /api/v1/notices``          读缓存（0 次 LLM）
-- ``POST /api/v1/notices/refresh`` 手动刷新（1 次 LLM，需 admin）
 - ``GET /api/v1/notices/status``   缓存与调度状态（调试/验证用）
+
+缓存由**启动预热 + 定时任务**（``POWERNEWS_NOTICE_INTERVAL_SECONDS``，默认 2 小时）刷新，
+**没有手动刷新端点** —— 2026-10-16 核实：本文件的 docstring 曾列出
+``POST /api/v1/notices/refresh``，但该路由自首次提交起就从未实现，
+刻意以「无写入口」保证访客量完全不影响 LLM 调用次数。
 """
 
 from __future__ import annotations

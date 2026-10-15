@@ -10,8 +10,8 @@
  * # web/.env.local
   VITE_AI_PROVIDER=llm
  * VITE_LLM_API_URL=https://openrouter.ai/api/v1/chat/completions    # 不要带 /chat/completions
- * VITE_LLM_API_KEY=sk-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
- * VITE_LLM_MODEL=apodex/apodex-1.1-mini:free
+ * VITE_LLM_API_KEY=sk-or-v1-...        # 占位符，真实 Key 只写在 web/.env.local（不入库）
+ * VITE_LLM_MODEL=nvidia/nemotron-3-super-120b-a12b:free
  * ```
  *
  * ## 未配置时的行为（刻意设计）
@@ -45,11 +45,15 @@ const DEFAULT_TIMEOUT = 60_000
 /**
  * 默认输出上限 8000。
  *
- * 不能省：实测 OpenRouter 上的推理型模型（如 ``apodex-1.1-mini:free``）
- * 一次总结消耗 ``completion_tokens 3987``，其中 **``reasoning_tokens`` 3641** ——
- * 思考过程也计入输出长度。不显式给上限时，文章一多或要点一长就会被截断，
- * 表现是「返回的 JSON 不完整、解析失败」，而报错完全看不出是 token 不够。
- * 给大一些无害：按实际用量计费，不会因为上限大就多花钱。
+ * 不能省：实测 OpenRouter 上的推理型模型一次总结消耗 ``completion_tokens 3987``，
+ * 其中 **``reasoning_tokens`` 3641** —— 思考过程也计入输出长度。不显式给上限时，
+ * 文章一多或要点一长就会被截断，表现是「返回的 JSON 不完整、解析失败」，
+ * 而报错完全看不出是 token 不够。给大一些无害：按实际用量计费。
+ *
+ * ⚠️ 2026-10-16：原默认模型 ``apodex/apodex-1.1-mini:free`` 在 OpenRouter 上
+ * **已无可用端点**（调用返 HTTP 404 "No endpoints found"），已换成
+ * ``nvidia/nemotron-3-super-120b-a12b:free``。上面这组 token 数是**旧模型**的实测值，
+ * 换模型时需重新量一次（尤其是非推理型模型，一般远低于此）。
  */
 const DEFAULT_MAX_TOKENS = 8000
 

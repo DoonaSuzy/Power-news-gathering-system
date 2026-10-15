@@ -525,12 +525,40 @@ class _StubRepo:
         return self._latest
 
 
+def _unconfigured_llm() -> LLMClient:
+    """一个明确「未配置」的客户端：不发请求、不读 ``.env``。"""
+    return LLMClient(LLMSettings(
+        enabled=False, base_url="", api_key="", model="",
+        timeout=1.0, max_input_chars=100, max_tokens=10,
+    ))
+
+
 def _service(stub: _StubRepo, *, llm: LLMClient | None = None) -> SummaryService:
+    """构造被测服务。
+
+    ⚠️ 不传 ``llm`` 时注入**未配置**的客户端，而不是放任 ``SummaryService.llm``
+    去 ``build_llm_client()`` 读真实 ``.env`` —— 本文件开头就写明「全程离线」，
+    而开发机一旦配好可用的 LLM，那些「未配置」用例就会真的发网络请求：
+    实测 `.env` 配好后 ``test_service_defaults_to_extractive_when_llm_not_configured``
+    由「恰好通过」变为失败（``assert 'llm' == 'extractive'``）。
+    要测真实 LLM 路径就显式传 ``llm=``。
+    """
     svc = SummaryService(None)  # type: ignore[arg-type]
     svc.repo = stub  # type: ignore[assignment]
-    if llm is not None:
-        svc._llm = llm
+    svc._llm = llm if llm is not None else _unconfigured_llm()
     return svc
+
+
+class _OfflineSummaryService(SummaryService):
+    """路由测试用：``session`` 之外一律注入**未配置** LLM。
+
+    路由里的 ``SummaryService(session)`` 会惰性 ``build_llm_client()`` 读真实
+    ``.env``；不拦住它，本文件的路由用例就会真发网络请求（实测单例 13~30s，
+    且结果随开发机 ``.env`` 变化）。要测模型路径请显式传 ``llm=``。
+    """
+
+    def __init__(self, session, *, llm: LLMClient | None = None) -> None:  # noqa: ANN001
+        super().__init__(session, llm=llm if llm is not None else _unconfigured_llm())
 
 
 def _query(**kw) -> ArticleQuery:  # noqa: ANN003
@@ -538,12 +566,20 @@ def _query(**kw) -> ArticleQuery:  # noqa: ANN003
 
 
 def test_service_defaults_to_extractive_when_llm_not_configured():
+    """没配 LLM → 走抽取式，并把「为什么没走模型」写进 caveats。
+
+    回归：本用例早期靠「开发机恰好没配 LLM」通过 —— 一旦 ``.env`` 配好可用模型，
+    它就会真发请求并返回 ``method="llm"``。现在由 ``_service`` 显式注入未配置客户端，
+    结果与开发机的 ``.env`` 解耦。
+    """
     stub = _StubRepo(stats={"total": 3, "sources": 2, "provinces": 2,
                             "earliest": None, "latest": None},
                      rows=[{"id": 1, "title": "特高压投运", "body_text": "新增外送能力800万千瓦。",
                             "source_name": "国网", "published_at_cst": datetime(2026, 10, 12, 9),
                             "url": "u", "province_name": "北京"}])
-    data = run(_service(stub).news_summary(_query(), window_label="今日", range_key="today"))
+    svc = _service(stub)
+    assert svc.llm.configured is False  # 不读 .env，测试与开发机配置解耦
+    data = run(svc.news_summary(_query(), window_label="今日", range_key="today"))
     assert data["method"] == "extractive"
     assert data["summary"]["key_points"]
     assert any("抽取式" in c for c in data["caveats"])
@@ -766,7 +802,23 @@ class FakeSession:
         return _Result(rows)
 
 
+@pytest.fixture(autouse=True)
+def _offline_router_service(monkeypatch: pytest.MonkeyPatch) -> None:
+    """全文件默认：路由取到的 ``SummaryService`` 不带真实 LLM 配置。
+
+    用 ``monkeypatch`` 是为了**用完还原** —— 直接赋值模块属性会污染同一
+    pytest 进程里的其他测试文件（例如那些要靠 ``monkeypatch.setattr`` 打桩
+    ``summary_module.build_llm_client`` 的用例）。
+    """
+    monkeypatch.setattr(summary_module, "SummaryService", _OfflineSummaryService)
+
+
 def build_app(session: FakeSession) -> FastAPI:
+    """搭一个只挂 summary 路由的离线 app。
+
+    路由里的 ``SummaryService`` 由下面的 ``_offline_router_service`` 自动 fixture
+    换成 :class:`_OfflineSummaryService`（否则它会读真实 ``.env`` 并真的请求模型）。
+    """
     app = FastAPI()
     app.include_router(summary_module.router, prefix="/api/v1")
     register_exception_handlers(app)

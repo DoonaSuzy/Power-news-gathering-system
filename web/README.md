@@ -189,7 +189,7 @@ const PROVIDERS = {
 VITE_AI_PROVIDER=llm
 VITE_LLM_API_URL=https://openrouter.ai/api/v1/chat/completions
 VITE_LLM_API_KEY=sk-or-v1-...
-VITE_LLM_MODEL=apodex/apodex-1.1-mini:free
+VITE_LLM_MODEL=nvidia/nemotron-3-super-120b-a12b:free
 VITE_LLM_TIMEOUT_MS=60000
 VITE_LLM_MAX_TOKENS=8000
 ```
