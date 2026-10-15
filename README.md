@@ -19,7 +19,7 @@
 | --- | ---: |
 | 采集来源 | **60 个**（57 个适配器，59 个启用） |
 | 已入库文章 | **1,707 篇**（84 生产库；本机 dev 库 1,274，口径见下注） |
-| Python 代码 | **15,149 行**（`newsplatform/` + `powersdk/` 非空行） |
+| Python 代码 | **约 12,738 行**（`newsplatform/` + `powersdk/` 非空行，口径见下注） |
 | 自动化测试 | **620 个（全通过）**（口径见下注） |
 | 中台 API 端点 | **40 个**（口径见下注） |
 | 配图资源 | **120 张**（跨文章公共元素过滤后；治理前 680 张 / 265 MB） |
@@ -41,8 +41,10 @@
 > 本机开发库为 **1,274 篇**（`python scripts/site_inventory.py`，脚本末尾自动闭合验算）。
 > **演示对外数字前先确认连的是哪个库**，否则当场对不上。
 >
-> **代码量口径**：`newsplatform/` 7,898 + `powersdk/` 4,833 = 15,149 非空行；
-> 若含采集层 `newsagg/` 与 `scripts/` 则为 **38,773 行**（全仓 `.py` 总行 52,732）。
+> **代码量口径**（2026-10-16 实测，可复现）：`newsplatform/` **7,901** + `powersdk/` **4,837** = **12,738** 非空行；
+> 若含采集层 `newsagg/`（15,585）与 `scripts/`（10,565）则为 **38,888 行**；全仓 `.py` 非空行 **43,877**（再加 `tests/` 4,989）、总行 **53,011**。
+> 复现：`python -c "import pathlib;print(sum(1 for x in pathlib.Path('.').rglob('*.py') if '.workbuddy' not in x.parts for l in x.read_text(encoding='utf-8').splitlines() if l.strip()))"`（非空行）。
+> 旧文案 15,149 是 `7,898 + 4,833` 的**算术笔误**（两项相加为 12,731），已随本轮重算修正。
 
 ### 核心能力
 
@@ -184,7 +186,7 @@ Power News Aggregator/
 │
 ├── powersdk/                     # 电力数据中台统一接口 SDK（独立 pip 包）
 │   ├── client.py                 #   PowerDataClient（12 类时序数据）
-│   ├── interpolation.py          #   52 个气象参数插值方法映射表
+│   ├── interpolation.py          #   32 个气象参数 → 27 种插值方法映射表
 │   ├── parsing.py                #   JSON 解析 + 时间戳补全
 │   ├── pinyin.py                 #   地区索引（中文/拼音/缩写/区划码）
 │   ├── http_source.py            #   数据源抽象（内存/MySQL/fake）

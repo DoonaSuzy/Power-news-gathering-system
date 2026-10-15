@@ -2,9 +2,10 @@
 
 设计要点
 --------
-* :data:`INTERP_METHODS` 是纯配置：``气象参数名 → 插值方法名``，覆盖 31 个常用
-  气象/辐照参数，映射到 27 种不同方法。新增参数或调整方法只改这张表，不需要
-  碰任何处理逻辑（**配置与逻辑解耦**）。
+* :data:`INTERP_METHODS` 是纯配置：``气象参数名 → 插值方法名``，覆盖 32 个常用
+  气象/辐照参数，映射到 27 种不同方法（:data:`METHOD_CATALOG` 另有 1 种未启用
+  方法，共 28 种）。新增参数或调整方法只改这张表，不需要碰任何处理逻辑
+  （**配置与逻辑解耦**）。
 * :data:`METHOD_CATALOG` 描述每种方法的实现后端：``native`` 表示 pandas /
   NumPy 原生实现（本仓库在无 SciPy 环境下实测可用）；其余方法（cubic、spline、
   akima、pchip……）在缺少 SciPy 时**优雅降级为 ``linear``** 并记 loguru 调试日志，
@@ -105,7 +106,7 @@ SCIPY_METHODS: frozenset[str] = frozenset(
 #: 未知参数/未配置时的兜底方法
 DEFAULT_METHOD: str = "linear"
 
-#: 气象参数 → 插值方法映射表（20+ 参数、20+ 种不同方法；纯配置，可热更新）
+#: 气象参数 → 插值方法映射表（32 个参数、27 种不同方法；纯配置，可热更新）
 INTERP_METHODS: dict[str, str] = {
     # --- 温度类 ---
     "temperature_2m": "linear",

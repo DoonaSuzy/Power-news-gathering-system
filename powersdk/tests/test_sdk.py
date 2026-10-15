@@ -183,10 +183,14 @@ def test_multi_granularity_consistency(client):
 
 # --------------------------------------------------------------- 插值方法表
 def test_interpolation_method_table():
-    """20+ 气象参数 → 插值方法映射表（配置与逻辑解耦）。"""
-    assert len(INTERP_METHODS) >= 20
-    assert len(set(INTERP_METHODS.values())) >= 20
-    assert len(METHOD_CATALOG) >= 20
+    """32 个气象参数 → 27 种插值方法映射表（配置与逻辑解耦）。
+
+    精确锁定当前规模：表一变少说明有参数被误删（配置漂移），
+    变多则是新增参数但未同步 powersdk/README.md 与仓库 README 的口径。
+    """
+    assert len(INTERP_METHODS) == 32
+    assert len(set(INTERP_METHODS.values())) == 27
+    assert len(METHOD_CATALOG) == 28
     assert all(name in METHOD_CATALOG for name in set(INTERP_METHODS.values()))
 
     required = {

@@ -21,7 +21,7 @@ print(df.head())
 | 12 类时序数据（天气 / 电价 / 负荷 / 新能源出力 / 风电 / 光伏 / 水电 / 煤价 / 气价 / 用电量 / 电力缺口 / 预测） | `powersdk.categories()`、`Category` |
 | 多时间粒度（raw / hourly / daily / monthly，含 `h`、`日`、`月` 等别名） | `client.query(..., granularity=...)`、`powersdk.resample()` |
 | JSON 解析 + 时间戳自动补全 + 时区归一 | `powersdk.parse_json_records()`、`powersdk.complete_timestamps()` |
-| 20+ 气象参数 → 插值方法映射表（配置与逻辑解耦） | `powersdk.INTERP_METHODS`、`powersdk.resolve_method()` |
+| 32 个气象参数 → 27 种插值方法映射表（配置与逻辑解耦） | `powersdk.INTERP_METHODS`、`powersdk.resolve_method()` |
 | 向量化处理（10 万条/批，无行级循环） | `powersdk.vectorized_transform()` |
 | 通用工具（重采样 / 补缺 / 透视 / 清洗 / 单位归一 / 记录导出） | `powersdk.utils` |
 | 多环境配置（dev / test / prod） | `POWERSDK_ENV`、`powersdk.Settings` |
