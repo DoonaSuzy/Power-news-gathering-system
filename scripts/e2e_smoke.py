@@ -456,6 +456,110 @@ def main() -> int:
         r = client.delete(f"{api}/admin/api-keys/{ro_id}", headers=H)
         _check("DELETE 只读 Key 清理", r.status_code in (200, 204), f"HTTP {r.status_code}")
 
+    # ============ 8. 公告栏 ============
+    _section("8. 公告栏 /notices")
+    r = client.get(f"{api}/notices", headers=H)
+    d = _data(r) or {}
+    notices = d.get("notices") or []
+    _check("GET /notices 公告数据", r.status_code == 200 and isinstance(notices, list),
+           f"HTTP {r.status_code} 共 {len(notices)} 条")
+
+    r = client.get(f"{api}/notices/status", headers=H)
+    d_stat = _data(r) or {}
+    _check("GET /notices/status 缓存与定时任务状态",
+           r.status_code == 200 and "cached" in d_stat,
+           f"cached={d_stat.get('cached')} scheduler={d_stat.get('scheduler_running')} "
+           f"refreshing={d_stat.get('refreshing')}")
+    _check("status.interval_seconds 是整数（与 NOTICE_INTERVAL 同源）",
+           isinstance(d_stat.get("interval_seconds"), int),
+           f"interval={d_stat.get('interval_seconds')}s next={d_stat.get('next_refresh_at')}")
+
+    # ============ 9. 智能总结与实时新闻 ============
+    _section("9. 智能总结与实时新闻 /news")
+    # method=extractive 强制走本地算法，不依赖外部 LLM，结果可复现
+    r = client.get(f"{api}/news/summary", headers=H,
+                   params={"method": "extractive", "limit": 5})
+    d = _data(r) or {}
+    sm = d.get("summary") or {}
+    st = d.get("stats") or {}
+    _check("GET /news/summary method=extractive",
+           r.status_code == 200 and bool(sm.get("headline")),
+           f"HTTP {r.status_code} 用稿 {st.get('articles_used')} / 命中 {st.get('total_matched')}")
+    _check("extractive 不被降级、summary 结构完整",
+           d.get("method") == "extractive"
+           and all(k in sm for k in ("headline", "key_points", "highlights")),
+           f"method={d.get('method')} key_points={len(sm.get('key_points') or [])}")
+
+    # method=llm 强制走模型：成功则 method 必须是 llm，失败则必须明确报错
+    # （两条分支都算通过——本项钉的是「不静默降级」）
+    r = client.get(f"{api}/news/summary", headers=H,
+                   params={"method": "llm", "limit": 1})
+    if r.status_code == 200:
+        _check("强制 llm 时 method 未被降级",
+               (_data(r) or {}).get("method") == "llm",
+               f"method={(_data(r) or {}).get('method')}")
+    else:
+        _check("强制 llm 失败时明确报错（非静默降级）",
+               400 <= r.status_code < 600,
+               f"HTTP {r.status_code} code={_body(r).get('code')}")
+
+    r = client.get(f"{api}/news/live", headers=H, params={"limit": 3})
+    d = _data(r) or {}
+    _check("GET /news/live 检索补充（外部不可用时不报 500）",
+           r.status_code == 200 and "items" in d,
+           f"HTTP {r.status_code} 返回 {len(d.get('items') or [])} 条 / "
+           f"查询 {len(d.get('queries') or [])} 个 / 错误 {len(d.get('errors') or [])} 个")
+
+    # ============ 10. 气象 ============
+    _section("10. 气象 /weather")
+    r = client.get(f"{api}/weather/coverage", headers=H)
+    d = _data(r) or {}
+    items = d.get("items") or []
+    _check("GET /weather/coverage 分表覆盖",
+           r.status_code == 200 and bool(items),
+           f"HTTP {r.status_code} 表 {((d.get('meta') or {}).get('tables'))} 张 / 行 {len(items)}")
+    _check("coverage = 8 大区 x 3 产品 = 24 行", len(items) == 24, f"实际 {len(items)} 行")
+
+    r = client.get(f"{api}/weather/params", headers=H)
+    params = (_data(r) or {}).get("items") or []
+    _check("GET /weather/params 参数目录带单位",
+           r.status_code == 200 and bool(params) and all(p.get("unit") for p in params),
+           f"HTTP {r.status_code} 共 {len(params)} 个参数")
+
+    r = client.get(f"{api}/weather/华北/hist_rt", headers=H, params={"limit": 2})
+    meta = (_data(r) or {}).get("meta") or {}
+    _check("GET /weather/{region}/{product} 时序",
+           r.status_code == 200 and meta.get("table") == "wx_huabei_hist_rt",
+           f"HTTP {r.status_code} 行 {meta.get('returned')} / 粒度 {meta.get('granularity')}")
+
+    r = client.get(f"{api}/weather/华北/temperature", headers=H)
+    _check("未知气象产品 -> 400 并列出候选（不静默返空）",
+           r.status_code == 400 and "hist_rt" in str(_body(r).get("detail") or ""),
+           f"HTTP {r.status_code} {str(_body(r).get('detail'))[:48]}")
+
+    # ============ 11. 市场行情 ============
+    _section("11. 市场行情 /market")
+    r = client.get(f"{api}/market/datasets", headers=H)
+    ds = (_data(r) or {}).get("items") or []
+    names = {x.get("dataset") for x in ds}
+    _check("GET /market/datasets 数据集目录", r.status_code == 200 and len(ds) >= 6,
+           f"HTTP {r.status_code} 共 {len(ds)} 个数据集")
+    _check("目录含 lng_spot（按产出数据集枚举）", "lng_spot" in names,
+           f"datasets={sorted(n for n in names if n)}")
+
+    r = client.get(f"{api}/market/lng_spot", headers=H, params={"limit": 2})
+    d = _data(r) or {}
+    meta = d.get("meta") or {}
+    rows = d.get("items") or []
+    _check("GET /market/{dataset} 时序",
+           r.status_code == 200 and meta.get("dataset") == "lng_spot",
+           f"HTTP {r.status_code} 返回 {meta.get('returned')} 物化 {len(rows)} 条")
+    _check("limit 参数生效", len(rows) <= 2, f"请求 2 / 实际 {len(rows)}")
+
+    r = client.get(f"{api}/market/not_a_dataset", headers=H)
+    _check("未知数据集 -> 4xx（不静默返空）",
+           400 <= r.status_code < 500, f"HTTP {r.status_code}")
+
     # ============ 汇总 ============
     _section("汇总")
     print(f"  PASS {_PASS} / FAIL {_FAIL}")
