@@ -114,6 +114,35 @@ services:
     logging: *default-logging
     networks: [power-net]
 
+  # 每日备份：复用 mysql:8.4 镜像（零新镜像），启动即备一次，之后每天 BACKUP_AT。
+  # **不加 profile** —— 加了就等于「要有意想起来才会备份」，重演告警没人收的失败模式。
+  backup:
+    image: mysql:8.4
+    container_name: power-backup
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      # 只用于生成临时 .my.cnf；脚本里 unset 掉，避免在容器环境里长期可见
+      MYSQL_PWD: ${POWERNEWS_MYSQL_ROOT_PASSWORD:-root_dev_pwd}
+      BACKUP_HOST: mysql
+      BACKUP_USER: root
+      # 留空=自动枚举（排除系统库）。务必保持留空：同实例还有省级库 newsagg
+      BACKUP_DATABASES: ${POWERNEWS_BACKUP_DATABASES:-}
+      BACKUP_AT: ${POWERNEWS_BACKUP_AT:-03:30}
+      BACKUP_RETAIN_DAYS: ${POWERNEWS_BACKUP_RETAIN_DAYS:-7}
+      TZ: Asia/Shanghai
+    volumes:
+      # bind 而不是命名卷：备份要能被 scp 取走；命名卷的唯一优势「防误删」
+      # 在这里不成立——备份和主库同盘，真正的风险是盘坏。
+      - ./backups:/backup
+      # 目录挂载：单文件挂载在换 inode 后，容器跑的还是旧脚本
+      - ./deploy/backup:/opt/backup:ro
+    entrypoint: ["/bin/sh", "/opt/backup/backup.sh"]
+    logging: *default-logging
+    networks: [power-net]
+
   fastapi:
     build: *app-build
     image: *app-image
