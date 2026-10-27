@@ -184,11 +184,13 @@ def main() -> int:
 
             # ---------------- ⑦ 重建镜像 ----------------
             print("\n⑦ 重建镜像（docker compose build）")
+            # 不能写成 `... build 2>&1 | tail -5`：管道让 exit code 变成 tail 的（恒 0），
+            # 构建失败会被吞掉，脚本照样打印「部署完成」。这里取全量输出，本地截尾显示。
             code, out, err = run(
-                f"cd '{REMOTE_DIR}' && docker compose --env-file .env build 2>&1 | tail -5",
+                f"cd '{REMOTE_DIR}' && docker compose --env-file .env build 2>&1",
                 timeout=900,
             )
-            for line in out.splitlines():
+            for line in out.splitlines()[-8:]:
                 print(f"  {line}")
             if code != 0:
                 print(f"✗ 构建失败：{err[:400]}")
@@ -201,9 +203,9 @@ def main() -> int:
                 profiles += " --profile storage"
             if args.ops:
                 profiles += " --profile ops"
-            cmd = f"cd '{REMOTE_DIR}' && docker compose --env-file .env{profiles} up -d 2>&1 | tail -20"
+            cmd = f"cd '{REMOTE_DIR}' && docker compose --env-file .env{profiles} up -d 2>&1"
             code, out, err = run(cmd, timeout=600)
-            for line in out.splitlines():
+            for line in out.splitlines()[-12:]:
                 print(f"  {line}")
             if code != 0:
                 print(f"✗ 启动失败：{err[:400]}")
@@ -213,7 +215,12 @@ def main() -> int:
             print("\n⑨ 部署后验证")
             for label, c in [
                 ("容器状态", "docker ps --format 'table {{.Names}}\\t{{.Status}}\\t{{.Ports}}'"),
-                ("中台健康", "curl -fsS --max-time 5 http://127.0.0.1:8080/health || echo '(健康端点无响应)'"),
+                # 注意路径要带 /api/v1：`/health` 不在 API 前缀下，会被 SPA 回退成 index.html，
+# 看起来「有响应」其实拿不到健康数据。
+                (
+                    "中台健康",
+                    "curl -fsS --max-time 5 http://127.0.0.1:8080/api/v1/health || echo '(健康端点无响应)'",
+                ),
                 ("数据卷", "docker volume ls --format '{{.Name}}'"),
             ]:
                 code, out, _ = run(c)
