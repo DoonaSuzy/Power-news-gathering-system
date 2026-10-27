@@ -37,7 +37,10 @@ LOCAL_DDL: dict[str, Path] = {
 #: 省级项目的两份 DDL（作为可选对照）
 PROVINCE_DDL: dict[str, str] = {
     "newsagg": "sql/schema.sql",
-    "newsagg_platform": "sql/platform_schema.sql",
+    # 键同时充当报告里的「库名」列，改名会与上面 ``newsagg`` 撞键（platform_schema
+    # 会静默顶掉 schema.sql，审计清单少一半），所以带后缀区分，与 LOCAL_DDL 的
+    # ``powernews(wx)`` 保持同一种写法。
+    "newsagg(platform)": "sql/platform_schema.sql",
 }
 
 CREATE_RE = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?`?(\w+)`?\s*\(", re.I)

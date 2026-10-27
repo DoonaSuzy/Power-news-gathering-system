@@ -77,7 +77,7 @@ async def health(response: Response) -> dict:
         dependencies.append(DependencyHealth(
             name="province_db",
             ok=province_ok,
-            detail="省级新闻库（newsagg_platform，可选域）" if province_ok
+            detail="省级新闻库（newsagg，可选域·只读）" if province_ok
             else "不可用：channel=province 将返回 503，channel=all 自动降级",
         ))
 

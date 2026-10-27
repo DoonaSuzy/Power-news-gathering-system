@@ -84,7 +84,7 @@ class PlatformSettings(BaseSettings):
         "mysql+aiomysql://powernews:CHANGE_ME@127.0.0.1:3306"
         "/powernews?charset=utf8mb4"
     )
-    #: 省级新闻库（只读语义，**可选**）：newsagg_platform 的 articles / sources。
+    #: 省级新闻库（只读语义，**可选**）：newsagg 的 articles / sources。
     #: 留空表示未接入省级数据域——此时 ``channel=province`` 返回 503，
     #: ``channel=all`` 自动降级为只查电力，不会让整个接口挂掉。
     province_database_url: str = ""

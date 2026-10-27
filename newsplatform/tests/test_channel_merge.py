@@ -18,7 +18,12 @@ from datetime import datetime
 
 import pytest
 
-from newsplatform.core.exceptions import ArticleNotFound, BadRequest, ChannelUnavailable
+from newsplatform.core.exceptions import (
+    AmbiguousArticle,
+    ArticleNotFound,
+    BadRequest,
+    ChannelUnavailable,
+)
 from newsplatform.core.response import fail, ok
 from newsplatform.repositories.articles import ArticleQuery
 from newsplatform.repositories.base import Page
@@ -139,20 +144,43 @@ class TestMergePagination:
         assert province.calls == [("top", 4)]
 
     async def test_deep_page_is_rejected(self):
-        """超过扫描上限必须 400，而不是悄悄只查一部分。"""
+        """超过扫描窗口必须 400，而不是悄悄只查一部分。"""
         svc = _service(FakeRepo(POWER_ROWS), FakeRepo(PROVINCE_ROWS))
-        with pytest.raises(BadRequest, match="扫描上限"):
+        with pytest.raises(BadRequest, match="最多翻到第 250 页"):
             await svc.list(
                 ArticleQuery(channel=CHANNEL_ALL, page=MERGE_MAX_SCAN // 20 + 1, page_size=20)
             )
 
+    async def test_pages_capped_at_scan_window(self):
+        """pages 不能超过可翻页窗口——线上真实值：9,341 条 / 每页 20。
+
+        旧实现按 ``total/page_size`` 算出 468 页写进元数据，而第 251 页直接 400：
+        前端 ``hasMore = page < pages`` 于是一路显示「加载更多」，点下去静默失败。
+        """
+        svc = _service(FakeRepo(POWER_ROWS, total=4670), FakeRepo(PROVINCE_ROWS, total=4671))
+        page = await svc.list(ArticleQuery(channel=CHANNEL_ALL, page=1, page_size=20))
+
+        assert page.total == 9341
+        assert page.pages == MERGE_MAX_SCAN // 20 == 250
+        assert page.truncated is True                     # 468 > 250，必须如实标注
+        assert page.pages * page.page_size < page.total   # 这个不等号是**预期**，不是 bug
+
+    async def test_pages_not_capped_below_limit(self):
+        """数据量在窗口内时不能误报 truncated。"""
+        svc = _service(FakeRepo(POWER_ROWS, total=2), FakeRepo(PROVINCE_ROWS, total=2))
+        page = await svc.list(ArticleQuery(channel=CHANNEL_ALL, page=1, page_size=2))
+
+        assert page.pages == 2
+        assert page.truncated is False
+
     async def test_single_domain_uses_sql_pagination(self):
-        """单域不走归并，直接返回该库的分页结果。"""
+        """单域不走归并，直接返回该库的分页结果，且永不 truncated。"""
         svc = _service(FakeRepo(POWER_ROWS, total=99), FakeRepo(PROVINCE_ROWS))
         page = await svc.list(ArticleQuery(channel=CHANNEL_POWER, page=1, page_size=2))
 
         assert page.total == 99
         assert page.channels == [CHANNEL_POWER]
+        assert page.truncated is False
         assert all(i.channel == CHANNEL_POWER for i in page.items)
 
 
@@ -192,18 +220,54 @@ class TestCountAndDetail:
         svc = _service(FakeRepo(POWER_ROWS, total=2155), FakeRepo(PROVINCE_ROWS, total=1300))
         assert await svc.count(ArticleQuery(channel=CHANNEL_ALL)) == 3455
 
-    async def test_detail_prefers_power_then_falls_back(self):
-        svc = _service(FakeRepo(POWER_ROWS), FakeRepo(PROVINCE_ROWS))
-        detail = await svc.detail(2, CHANNEL_ALL)
-        assert detail.channel == CHANNEL_POWER
+    async def test_detail_all_is_ambiguous_when_both_domains_hit(self):
+        """同一个 id 两个域都有时**不能猜**——必须 409 并给出两条候选。
 
-        # 电力域没有 id=9，但省级域有
+        线上真实值：``/articles/2234?channel=power`` 是「内蒙古电力集团…」，
+        ``?channel=province`` 是山东大众网的一条。旧实现在 ``all`` 下直接返回
+        电力那条，用户从省级列表点进来看到的是另一篇文章，而且没有任何迹象。
+        """
         svc = _service(
-            FakeRepo(POWER_ROWS),
+            FakeRepo([_row(2234, datetime(2026, 10, 27), source="内蒙古电力")]),
+            FakeRepo([_row(2234, datetime(2026, 4, 9), source="大众网")]),
+        )
+        with pytest.raises(AmbiguousArticle) as err:
+            await svc.detail(2234, CHANNEL_ALL)
+
+        assert err.value.code == 4002
+        assert err.value.status_code == 409
+        candidates = err.value.extra["candidates"]
+        assert [c["channel"] for c in candidates] == [CHANNEL_POWER, CHANNEL_PROVINCE]
+        # 候选里要能分辨出是哪两条，否则客户端拿到 409 也没法做选择
+        assert [c["source_name"] for c in candidates] == ["内蒙古电力", "大众网"]
+        assert all(c["id"] == 2234 for c in candidates)
+        # 不放正文：冲突响应不该变成半篇文章
+        assert all("body_text" not in c for c in candidates)
+
+    async def test_explicit_channel_bypasses_ambiguity(self):
+        """带上 channel 就照常返回——这是 409 给出的恢复路径，必须真的可用。"""
+        svc = _service(
+            FakeRepo([_row(2234, datetime(2026, 10, 27), source="内蒙古电力")]),
+            FakeRepo([_row(2234, datetime(2026, 4, 9), source="大众网")]),
+        )
+        power = await svc.detail(2234, CHANNEL_POWER)
+        province = await svc.detail(2234, CHANNEL_PROVINCE)
+        assert (power.channel, power.source_name) == (CHANNEL_POWER, "内蒙古电力")
+        assert (province.channel, province.source_name) == (CHANNEL_PROVINCE, "大众网")
+
+    async def test_detail_all_returns_single_hit(self):
+        """只有一个域有这条时照旧返回——防「为了防歧义把正常请求也拦掉」。"""
+        svc = _service(
+            FakeRepo([_row(1, datetime(2026, 10, 3, 9))]),
             FakeRepo([_row(9, datetime(2026, 10, 5, 9))]),
         )
-        detail = await svc.detail(9, CHANNEL_ALL)
-        assert detail.channel == CHANNEL_PROVINCE
+        assert (await svc.detail(1, CHANNEL_ALL)).channel == CHANNEL_POWER
+        assert (await svc.detail(9, CHANNEL_ALL)).channel == CHANNEL_PROVINCE
+
+    async def test_detail_all_degrades_when_province_missing(self):
+        """省级域没接时只剩一条可查，不能因此报 409。"""
+        svc = _service(FakeRepo([_row(2234, datetime(2026, 10, 27))]), None)
+        assert (await svc.detail(2234, CHANNEL_ALL)).channel == CHANNEL_POWER
 
     async def test_detail_not_found_mentions_searched_channels(self):
         svc = _service(FakeRepo(POWER_ROWS), FakeRepo(PROVINCE_ROWS))
@@ -488,8 +552,9 @@ class TestProvinceCodeNormalization:
 # 10. 省级库表结构守卫
 # ======================================================================
 class TestProvinceSchemaContract:
-    """省级库接的是**采集库**（newsagg），不是平台库（newsagg_platform）。
+    """省级库接的是**采集库 schema**（`newsagg` 的 articles / sources），
 
+    不是那套平台库 schema（那套库早已不存在，别再照着老文档配）。
     两者 `sources` 的列名不同：采集库是 `verification_status`，
     平台库是 `status`；采集库 `articles` 没有 `created_at`。
     映射错会在查询时报 1054，但只在有库的环境才暴露——所以用静态断言钉住。

@@ -41,7 +41,14 @@ def register_exception_handlers(app: FastAPI) -> None:
             "业务异常 %s(%s): %s %s -> %s",
             exc.name, exc.code, request.method, request.url.path, exc.detail,
         )
-        return JSONResponse(status_code=exc.status_code, content=fail(exc.code, exc.detail))
+        # ``extra`` 必须一起下发：409 的 ``candidates``（同编号的两个数据域）
+        # 存在 ``exc.extra`` 里，不传出去客户端只知道「冲突」却不知道冲突的是什么，
+        # 也就无法带 channel 重取。此前这里只传 code/detail，``to_payload()``
+        # 写好了却从没被调用过。
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=fail(exc.code, exc.detail, extra=exc.extra),
+        )
 
     @app.exception_handler(StarletteHTTPException)
     async def _http_error(request: Request, exc: StarletteHTTPException) -> JSONResponse:

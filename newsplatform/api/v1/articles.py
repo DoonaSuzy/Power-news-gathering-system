@@ -103,7 +103,9 @@ async def get_article(
     """取单篇详情；不存在返回业务码 3003（``article_not_found``）。
 
     两个数据域的 id 各自自增，**相同 id 不是同一条**，所以详情必须带 ``channel``
-    才能保证取到的是你想要的那条。
+    才能保证取到的是你想要的那条。``channel=all`` 下两库都查：只有一条命中就返回
+    那一条；**两条都命中返回 409（``ambiguous_article``）**，响应里 ``candidates``
+    给出两条的标题/来源/时间，客户端据此带 ``channel`` 重取。
     """
     detail = await ArticleService(session, province_session).detail(article_id, channel)
     return ok(detail.model_dump(mode="json"))

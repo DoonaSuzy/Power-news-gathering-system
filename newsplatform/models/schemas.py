@@ -74,6 +74,12 @@ class ArticlePage(PageMeta):
     #: 本次实际查询的数据域。``channel=all`` 但省级库未接入时会退化成
     #: ``["power"]``——把这个事实告诉客户端，比让它自己猜「为什么少了一半」好。
     channels: list[str] = Field(default_factory=lambda: ["power"])
+    #: ``true`` 表示 ``total`` 超出跨域可翻页窗口、``pages`` 已封顶。
+    #: 此时 ``pages * page_size < total`` 是**预期**，不是分页算错——
+    #: 跨域查询要在内存里归并两个库，深翻页会真的把两个库各拉一遍。
+    truncated: bool = Field(
+        False, description="可翻页数是否因跨域扫描窗口而封顶（此时 pages*page_size < total）"
+    )
 
 
 class SourcePage(PageMeta):

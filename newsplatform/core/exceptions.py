@@ -37,6 +37,7 @@ __all__ = [
     "ArticleNotFound",
     "ProvinceNotFound",
     "Conflict",
+    "AmbiguousArticle",
     "RateLimited",
     "UpstreamUnavailable",
     "InternalError",
@@ -57,9 +58,11 @@ ERROR_CODES: dict[int, str] = {
     3003: "article_not_found",
     3004: "province_not_found",
     4001: "conflict",
+    4002: "ambiguous_article",
     4290: "rate_limited",
     5000: "internal_error",
     5001: "upstream_unavailable",
+    5002: "channel_unavailable",
 }
 
 
@@ -146,6 +149,22 @@ class ProvinceNotFound(ResourceNotFound):
 class Conflict(AppError):
     status_code = 409
     code = 4001
+
+
+class AmbiguousArticle(Conflict):
+    """同一个编号在两个数据域都存在——不是「找不到」，是「找到两条」。
+
+    电力库与省级库的 ``articles.id`` 各自自增，区间重叠（电力到 2,7xx 时
+    省级已经到 6,6xx）。``channel=all`` 下按 id 取详情，如果只返回先命中的那条，
+    调用方拿到的可能是**另一篇文章**——而且响应里没有任何迹象表明取错了。
+
+    所以双命中一律 409，并把两条候选放进 ``extra["candidates"]``，
+    让客户端能带 ``channel`` 重取。用 4000 段而不是 3000 段：
+    两条资源都存在，问题出在「这个编号在当前作用域下有歧义」。
+    """
+
+    status_code = 409
+    code = 4002
 
 
 class RateLimited(AppError):

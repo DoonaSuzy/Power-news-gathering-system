@@ -11,7 +11,7 @@
 channel       数据源                       内容
 ============  ==========================  ===============================
 ``power``     ``powernews`` 库             电网公司 / 能源主管部门 / 行业媒体（60 源）
-``province``  ``newsagg_platform`` 库      省级党报与广电官方新闻（34 源）
+``province``  ``newsagg`` 库               省级党报与广电官方新闻（34 源）
 ``all``       两者合并（默认）              ——
 ============  ==========================  ===============================
 
@@ -33,6 +33,7 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from newsplatform.core.exceptions import (
+    AmbiguousArticle,
     ArticleNotFound,
     BadRequest,
     ChannelUnavailable,
@@ -55,8 +56,10 @@ CHANNEL_ALL = "all"
 #: 服务可能被 CLI / 脚本直接调用，不能假设调用方一定过了 FastAPI 的校验。
 CHANNEL_CHOICES: tuple[str, ...] = (CHANNEL_POWER, CHANNEL_PROVINCE, CHANNEL_ALL)
 
-#: 跨域归并的扫描上限：两库各取 ``page * page_size`` 条再切。
-#: 3000 条数据下这个上限足够；超过它说明调用方在做深分页，应当改用导出。
+#: 跨域归并的**可翻页扫描窗口**：两库各取 ``page * page_size`` 条再切。
+#: 它同时决定 ``pages`` 的上限（``MERGE_MAX_SCAN // page_size``）——两者必须同源，
+#: 否则会出现「元数据说能翻 468 页、第 251 页却 400」这种自相矛盾。
+#: 9,341 条数据下窗口足够；超过说明调用方在深翻页，应当改用导出。
 MERGE_MAX_SCAN = 5000
 
 #: 排序兜底值。``published_at_cst`` 可为 NULL（时间未解析出来），
@@ -108,7 +111,7 @@ class ArticleService:
 
     Args:
         session: 电力采集库（``powernews``）会话。
-        province_session: 省级新闻库（``newsagg_platform``）会话。
+        province_session: 省级新闻库（``newsagg``）会话。
             ``None`` 表示未接入该数据域，相关 channel 会降级或报 503。
     """
 
@@ -177,6 +180,8 @@ class ArticleService:
                 page_size=page.page_size,
                 pages=page.pages,
                 channels=list(channels),
+                # 单域走 SQL 分页，页数就是真页数，不存在封顶
+                truncated=False,
             )
         return await self._merge_list(q)
 
@@ -188,10 +193,14 @@ class ArticleService:
         只取一页的量会把「另一个库的前 N 页」整体漏掉。
         """
         scan = q.page * q.page_size
+        max_pages = max(1, MERGE_MAX_SCAN // q.page_size) if q.page_size else 1
         if scan > MERGE_MAX_SCAN:
+            # 这里必须自洽：既然 pages 已封顶到 max_pages，越界时就该说「最多 N 页」，
+            # 而不是一边告诉客户端 total/20=468 页、一边在第 251 页报 400。
             raise BadRequest(
-                f"跨域查询最多翻到第 {MERGE_MAX_SCAN // q.page_size} 页"
-                f"（扫描上限 {MERGE_MAX_SCAN} 条）；请缩小时间范围或改用 /articles/export"
+                f"跨域查询最多翻到第 {max_pages} 页"
+                f"（可翻页扫描窗口 {MERGE_MAX_SCAN} 条，响应里的 pages 已封顶）；"
+                "请缩小时间范围或改用 /articles/export"
             )
         assert self.province_repo is not None  # _resolve 已保证
         power_rows, province_rows = await asyncio.gather(
@@ -209,13 +218,16 @@ class ArticleService:
         start = (q.page - 1) * q.page_size
         items = merged[start : start + q.page_size]
         total = power_total + province_total
+        real_pages = (total + q.page_size - 1) // q.page_size if q.page_size else 0
+        pages = min(real_pages, max_pages)
         return ArticlePage(
             items=[ArticleListItem(**row) for row in items],
             total=total,
             page=q.page,
             page_size=q.page_size,
-            pages=(total + q.page_size - 1) // q.page_size if q.page_size else 0,
+            pages=pages,
             channels=[CHANNEL_POWER, CHANNEL_PROVINCE],
+            truncated=pages < real_pages,
         )
 
     @staticmethod
@@ -233,21 +245,61 @@ class ArticleService:
         )
 
     # ---------------- 详情 ----------------
-    async def detail(self, article_id: int, channel: str = CHANNEL_ALL) -> ArticleDetail:
-        """文章详情，不存在抛 :class:`ArticleNotFound`。
+    @staticmethod
+    def _candidate(row: dict[str, Any], channel: str) -> dict[str, Any]:
+        """把一行压成 409 里的候选项。
 
-        ``channel=all`` 时先查电力、再查省级——两个域的 id 各自自增，
-        **id 相同不代表同一条**，所以不能"随便命中一个就返回"，
-        必须按请求的域去找；``all`` 下按固定优先级（电力优先）取第一个命中。
+        只放「够用户判断该点哪条」的字段：标题、来源、时间、域。
+        不放正文——冲突响应不该变成半篇文章，也会让日志与告警被大字段污染。
+        """
+        published = row.get("published_at_cst")
+        return {
+            "channel": channel,
+            "id": row.get("id"),
+            "title": row.get("title") or "",
+            "source_name": row.get("source_name") or row.get("source_name_full") or "",
+            "published_at_cst": published.isoformat(sep=" ") if published else None,
+        }
+
+    async def detail(self, article_id: int, channel: str = CHANNEL_ALL) -> ArticleDetail:
+        """文章详情，不存在抛 :class:`ArticleNotFound`，双命中抛 :class:`AmbiguousArticle`。
+
+        两个域的 ``articles.id`` 各自自增且区间重叠（电力到 2,7xx 时省级已到 6,6xx），
+        所以 ``channel=all`` **不能**「先查电力，命中就返回」——那样一条省级文章
+        会静默返回成同编号的电力文章，而响应里看不出任何异常。
+
+        改为：单域直取；``all`` 时两库都查，**双命中就报 409** 并在 ``extra``
+        里给出两条候选，让调用方带 ``channel`` 重取。只有一条命中时行为不变。
         """
         channels = self._resolve(channel)
         row: dict[str, Any] | None = None
         hit_channel = channels[0]
-        for name in channels:
-            found = await self._repo_of(name).get(article_id)
-            if found:
-                row, hit_channel = found, name
-                break
+
+        if len(channels) == 1:
+            row, hit_channel = await self._repo_of(channels[0]).get(article_id), channels[0]
+        else:
+            assert self.province_repo is not None  # _resolve 已保证
+            power_row, province_row = await asyncio.gather(
+                self.repo.get(article_id),
+                self.province_repo.get(article_id),
+            )
+            if power_row and province_row:
+                raise AmbiguousArticle(
+                    f"编号 {article_id} 在「电力」与「省级」两个数据域都存在，"
+                    "请带上 channel=power 或 channel=province 重新获取",
+                    extra={
+                        "article_id": article_id,
+                        "candidates": [
+                            self._candidate(power_row, CHANNEL_POWER),
+                            self._candidate(province_row, CHANNEL_PROVINCE),
+                        ],
+                    },
+                )
+            if power_row:
+                row, hit_channel = power_row, CHANNEL_POWER
+            elif province_row:
+                row, hit_channel = province_row, CHANNEL_PROVINCE
+
         if not row:
             raise ArticleNotFound(f"文章不存在: {article_id}（已查 {', '.join(channels)}）")
 

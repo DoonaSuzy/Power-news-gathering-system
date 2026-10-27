@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import inspect
+from pathlib import Path
 
 import pytest
 from sqlalchemy import func, select
@@ -263,3 +264,32 @@ def test_article_has_body_text_not_content():
     assert hasattr(Article, "body_text")
     assert not hasattr(Article, "content")
     assert Article.__tablename__ == "articles"
+
+
+# ======================================================================
+# 7. 省级库名不能回退成废弃名
+# ======================================================================
+def test_stale_province_db_name_absent():
+    """省级库在代码、示例配置、对外文案里只能叫 ``newsagg``。
+
+    2026-10-27 之前，注释与 ``GET /api/v1/health`` 的 ``province_db.detail``
+    写的都是另一个早已不存在的库名，而生产实际导入的库叫 ``newsagg``。
+    运维照着那句文案配 ``POWERNEWS_PLATFORM_PROVINCE_DATABASE_URL`` 会连到
+    不存在的库，且报错本身也是错的——「文档把人带沟里」的典型。
+
+    只扫**代码与示例配置**，不含 ``docs/``：那是本地笔记（已被 gitignore），
+    历史报告需要保留当时的原文。要描述这段历史时，写「那套库早已不存在」即可。
+    """
+    root = Path(__file__).resolve().parents[1]
+    stale = "newsagg_" + "platform"  # 拆开写，避免本文件自己被扫到
+    targets = [
+        *root.glob("newsplatform/**/*.py"),
+        *root.glob("scripts/*.py"),
+        root / ".env.example",
+    ]
+    hits = sorted(
+        str(p.relative_to(root))
+        for p in targets
+        if p.is_file() and stale in p.read_text(encoding="utf-8", errors="replace")
+    )
+    assert not hits, f"废弃库名仍在：{hits}（省级库统一叫 newsagg）"
