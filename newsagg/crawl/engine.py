@@ -257,6 +257,9 @@ def _cool_down(session: CrawlSession, *, hours: int) -> None:
         until = now_utc_naive() + timedelta(hours=hours)
         with session.db.connect() as conn:
             session.repo.set_cooldown(conn, session.source_id, until)
+            # 必须显式提交：pymysql 的连接上下文退出时只关闭不提交，
+            # 少了这句，冷却写了又回滚，日志却照样打印「冷却至 …」。
+            conn.commit()
         log.warning(
             "来源 %s 遭挑战型阻断，冷却至 %s", session.adapter_name or session.source_id, until
         )
