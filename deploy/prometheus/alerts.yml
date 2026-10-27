@@ -52,3 +52,71 @@ groups:
         annotations:
           summary: "API p95 延迟超过 200ms"
           description: "近 5 分钟 p95 延迟 {{ $value }}s，已超过 0.2s SLO 阈值。"
+
+      # ------------------------------------------------------------------
+      # 站点级采集健康度（依赖 newsplatform/services/site_metrics.py）
+      #
+      # 上面几条看的是「API 活着吗」，这几条看的是「每个站点还在产稿吗」——
+      # 之前只有前者，所以 412 反爬把全部站点拦住时，监控一片绿。
+      # ------------------------------------------------------------------
+
+      # 站点超过 2 小时没成功采集过（且仍启用）。
+      - alert: SourceStale
+        expr: |
+          powernews_source_enabled == 1
+          and (time() - powernews_source_last_success_ts) > 7200
+        for: 10m
+        labels:
+          severity: warning
+          team: crawl
+        annotations:
+          summary: "站点 {{ $labels.source }} 已超 2 小时未成功采集"
+          description: "{{ $labels.channel }}/{{ $labels.source }}（{{ $labels.province }}）最近成功采集距今 {{ $value | humanizeDuration }}。"
+
+      # 启用的站点近 24 小时一条没入库。
+      - alert: SourceNoArticles
+        expr: |
+          powernews_source_enabled == 1
+          and powernews_source_articles_24h == 0
+        for: 2h
+        labels:
+          severity: warning
+          team: crawl
+        annotations:
+          summary: "站点 {{ $labels.source }} 近 24 小时零产出"
+          description: "{{ $labels.channel }}/{{ $labels.source }} 连续 24 小时没有新文章入库，检查是否被反爬拦截或栏目改版。"
+
+      # 最近一次任务失败且 24 小时内失败 ≥3 次。
+      - alert: SourceFailing
+        expr: |
+          powernews_source_last_job_failed == 1
+          and powernews_source_failures_24h >= 3
+        for: 15m
+        labels:
+          severity: critical
+          team: crawl
+        annotations:
+          summary: "站点 {{ $labels.source }} 连续采集失败"
+          description: "近 24 小时失败/待重试 {{ $labels.source }} 任务 {{ $value }} 次，最近一次仍失败。"
+
+      # 全库最新文章超过 3 小时（说明整条采集链路停了）。
+      - alert: CollectorLagHigh
+        expr: powernews_collector_lag_seconds > 10800
+        for: 10m
+        labels:
+          severity: critical
+          team: crawl
+        annotations:
+          summary: "采集链路停滞"
+          description: "全库最新文章距今 {{ $value | humanizeDuration }}，所有站点可能同时被拦或 worker 未消费。"
+
+      # 站点指标本身停止刷新（后台任务挂了/查库失败）。
+      - alert: SiteMetricsStale
+        expr: (time() - powernews_site_metrics_refresh_ts) > 300
+        for: 5m
+        labels:
+          severity: warning
+          team: api
+        annotations:
+          summary: "站点指标停止刷新"
+          description: "site_metrics 后台任务超过 5 分钟未刷新，站点级告警可能已失效。"

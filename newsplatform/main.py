@@ -49,6 +49,7 @@ from newsplatform.core.logging import get_logger
 from newsplatform.core.metrics import instrument_app
 from newsplatform.core.middleware import RequestContextMiddleware
 from newsplatform.services.notice_service import get_notice_service
+from newsplatform.services.site_metrics import SiteMetricsRefresher
 
 __all__ = ["app", "create_app", "lifespan"]
 
@@ -104,9 +105,16 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     notice_service = get_notice_service()
     await notice_service.start_scheduler()
 
+    # 站点级采集指标：每 60 秒刷一次，供 Prometheus 抓取。
+    # 放在后台任务里而不是 scrape 时查库——collector 是同步接口，
+    # 在 scrape 里做异步桥接既复杂又容易把 /metrics 拖成超时。
+    site_metrics = SiteMetricsRefresher(db)
+    site_metrics.start()
+
     try:
         yield
     finally:
+        await site_metrics.stop()
         await notice_service.stop_scheduler()
         await dispose_database()
         log.info("应用已关闭")

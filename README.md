@@ -3,7 +3,7 @@
 > 采集全国 34 个省级行政区的电力新闻与市场行情，并提供统一查询 API 与 AI 摘要能力。
 > 覆盖「采集 → 调度 → 存储 → 监控」全流程。
 
-[![tests](https://img.shields.io/badge/tests-667%20passed-brightgreen)](#-开发)
+[![tests](https://img.shields.io/badge/tests-674%20passed-brightgreen)](#-开发)
 [![python](https://img.shields.io/badge/python-%3E%3D3.11-blue)](https://www.python.org/)
 [![license](https://img.shields.io/badge/license-MIT-lightgrey)](#-许可)
 
@@ -20,7 +20,7 @@
 | 采集来源 | **60 个**（57 个适配器，59 个启用） |
 | 已入库文章 | **1,707 篇**（84 生产库；本机 dev 库 1,274，口径见下注） |
 | Python 代码 | **约 12,738 行**（`newsplatform/` + `powersdk/` 非空行，口径见下注） |
-| 自动化测试 | **667 个（全通过）**（口径见下注） |
+| 自动化测试 | **674 个（全通过）**（口径见下注） |
 | 中台 API 端点 | **42 个**（40 个电力域 + `channels` + `health/ready`，口径见下注） |
 | 数据域 | **2 个**：`power`（60 源）/ `province`（34 源），`/articles?channel=` 合并查询 |
 | 配图资源 | **120 张**（跨文章公共元素过滤后；治理前 680 张 / 265 MB） |
@@ -34,7 +34,7 @@
 > 复现：`python -c "from newsplatform.main import app; print(len(app.routes))"`。
 >
 > **测试口径**（2026-10-27 实测，可复现）：`pyproject.toml` 的 `testpaths` 含四个目录 ——
-> `tests/` **542** + `powersdk/tests` 49 + `newsagg/finance/tests` 22 + `newsplatform/tests` **54** = **667**。
+> `tests/` **542** + `powersdk/tests` 49 + `newsagg/finance/tests` 22 + `newsplatform/tests` **61** = **674**。
 > 其中 `newsplatform/tests` 原有 9 例，本轮新增 45 例：`test_channel_merge.py` 32（跨域归并/降级/编码归一/表结构守卫）+ `test_spa_fallback.py` 13（SPA 回退不得吞接口）+ `tests/test_news_summary.py` 2（摘要域边界）。
 > 复现：`python -m pytest --junitxml=.pytest.xml`（`-q` 的 summary 行抓不到计数，必须用 junitxml）。
 >
@@ -126,7 +126,7 @@
 | 工具 | 版本 | 用途 |
 | --- | --- | --- |
 | **Ruff** | **0.17.0** | Lint + Format（替代 black/isort/flake8） |
-| **pytest** | **9.1.1** | 单元测试（**667 个**） |
+| **pytest** | **9.1.1** | 单元测试（**674 个**） |
 | **pytest-asyncio** | **1.4.0** | 异步测试支持 |
 | **fakeredis** | **2.39.0** | Redis 测试替身（测试**不需要真 Redis**） |
 | **freezegun** | **1.5.1** | 时间冻结（时间窗口逻辑测试） |
@@ -500,7 +500,7 @@ ruff check .
 # ② 单元测试：仅 tests/ 目录期望 540 passed
 python -m pytest tests -q
 
-#    四个 testpaths 全量期望 667 passed（tests/ 542 + powersdk/tests 49
+#    四个 testpaths 全量期望 674 passed（tests/ 542 + powersdk/tests 49
 #    + newsagg/finance/tests 22 + newsplatform/tests 33）
 python -m pytest --junitxml=.pytest.xml
 
@@ -551,7 +551,7 @@ NO_PROXY=127.0.0.1,localhost HTTP_PROXY= HTTPS_PROXY= \
 | 监控（Prometheus + Grafana + 预置看板） | ✅ |
 | 图片对象存储（RustFS，S3 兼容；配图经四层过滤） | ✅ |
 | 港澳台 3 源（中华电力 / 澳电 / 台电） | ✅ |
-| 测试（667 个） | ✅ 全通过 |
+| 测试（674 个） | ✅ 全通过 |
 | 文档（75 份） | ✅ |
 
 ### ⏳ 待开发
