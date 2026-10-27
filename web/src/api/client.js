@@ -28,12 +28,17 @@ export function setToken(value) {
 }
 
 export class ApiError extends Error {
-  constructor(message, { status = 0, code = -1, requestId = '' } = {}) {
+  constructor(message, { status = 0, code = -1, requestId = '', payload = null } = {}) {
     super(message)
     this.name = 'ApiError'
     this.status = status
     this.code = code
     this.requestId = requestId
+    /**
+     * 整包响应体。``extra`` 类信息（409 的 ``candidates``、422 的 ``errors``）
+     * 都在 body 顶层，只留 message 会让调用方无从恢复。
+     */
+    this.payload = payload
   }
 
   /** 401/403：调用方据此提示「去填 API Key」而不是「加载失败」。 */
@@ -110,6 +115,7 @@ export async function apiGet(path, { params, timeout = DEFAULT_TIMEOUT, signal }
       status: resp.status,
       code: body?.code ?? resp.status,
       requestId: body?.request_id,
+      payload: body,
     })
   }
   if (body?.code !== 0) {
@@ -117,6 +123,7 @@ export async function apiGet(path, { params, timeout = DEFAULT_TIMEOUT, signal }
       status: resp.status,
       code: body?.code,
       requestId: body?.request_id,
+      payload: body,
     })
   }
   return body.data

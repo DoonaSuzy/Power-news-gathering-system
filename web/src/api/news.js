@@ -60,13 +60,43 @@ export async function fetchArticles(params = {}, options = {}) {
     page: data?.page ?? 1,
     pageSize: data?.page_size ?? 20,
     pages: data?.pages ?? 0,
+    // true 表示 total 超出跨域扫描窗口、pages 已封顶；此时 pages*pageSize < total
+    // 是**预期**，不是分页算错
+    truncated: Boolean(data?.truncated),
+    channels: data?.channels ?? [],
     items: (data?.items ?? []).map(toArticle),
   }
 }
 
-/** 拉取单篇详情（含正文全文）。 */
-export async function fetchArticleDetail(id, options = {}) {
-  const data = await apiGet(`/articles/${id}`, options)
+/**
+ * 数据域目录（规模与新鲜度）。
+ *
+ * 前端用它回答两件事：省级域到底有没有接入（`available`），
+ * 以及它最新一条文章是什么时候（用来提示「历史快照」）。
+ */
+export async function fetchChannels(options = {}) {
+  const data = await apiGet('/channels', options)
+  return (data?.items ?? []).map((c) => ({
+    channel: c.channel,
+    label: c.label || c.channel,
+    available: Boolean(c.available),
+    sources: Number(c.sources || 0),
+    articles: Number(c.articles || 0),
+    latestPublishedAt: c.latest_published_at || null,
+  }))
+}
+
+/**
+ * 拉取单篇详情（含正文全文）。
+ *
+ * ``channel`` 必须由调用方按列表项传入：两个数据域的 id 各自自增且区间重叠，
+ * 不带域取详情会在「同编号两条」时返回另一篇（后端此时给 409 兜底）。
+ */
+export async function fetchArticleDetail(id, { channel = '', ...options } = {}) {
+  const data = await apiGet(`/articles/${id}`, {
+    ...options,
+    params: { channel: channel || undefined },
+  })
   const body = data?.body_text || ''
   return {
     ...toArticle(data || {}),
