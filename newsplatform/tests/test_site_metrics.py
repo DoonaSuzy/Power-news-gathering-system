@@ -28,6 +28,7 @@ def _reset():
         sm.SOURCE_ARTICLES_24H,
         sm.SOURCE_FAILURES_24H,
         sm.SOURCE_LAST_JOB_FAILED,
+        sm.SOURCE_INTERVAL_HOURS,
     ):
         gauge.clear()
     yield
@@ -40,6 +41,17 @@ class TestEpoch:
     def test_datetime_converted(self):
         dt = datetime(2026, 10, 27, 12, 0, tzinfo=UTC)
         assert sm._epoch(dt) == pytest.approx(dt.timestamp())
+
+    def test_naive_datetime_treated_as_utc(self):
+        """库里是 naive UTC，缺时区时必须按 UTC 解释。
+
+        按本地时区解释会让全部 *_ts 指标整体偏移（+08:00 就是 8 小时），
+        SourceStale / CollectorLagHigh 会集体误判，而且现象是「一直报/一直不报」，
+        很难与真实的采集停摆区分。
+        """
+        naive = datetime(2026, 10, 27, 12, 0)
+        aware = datetime(2026, 10, 27, 12, 0, tzinfo=UTC)
+        assert sm._epoch(naive) == pytest.approx(aware.timestamp())
 
 
 class TestApplyRows:
@@ -127,3 +139,18 @@ class TestApplyRows:
             ]
         )
         assert got == pytest.approx(dt.timestamp())
+
+
+class TestIntervalHours:
+    """采集间隔指标：告警阈值要按它分档，缺了就只能用固定阈值（必然误报）。"""
+
+    _LABELS = {"source": "bjx", "channel": "power", "province": "", "category": "industry"}
+
+    def test_interval_written(self):
+        sm.apply_rows([{**self._LABELS, "interval_hours": 4}])
+        assert _value("powernews_source_interval_hours", **self._LABELS) == 4.0
+
+    def test_interval_defaults_to_24(self):
+        """缺列/缺值按 24h 保守处理：宁可晚报警，也不要把阈值算成 0。"""
+        sm.apply_rows([{**self._LABELS}])
+        assert _value("powernews_source_interval_hours", **self._LABELS) == 24.0

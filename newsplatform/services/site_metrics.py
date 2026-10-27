@@ -31,7 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from prometheus_client import Gauge
@@ -46,6 +46,7 @@ __all__ = [
     "SOURCE_ARTICLES_24H",
     "SOURCE_FAILURES_24H",
     "SOURCE_LAST_JOB_FAILED",
+    "SOURCE_INTERVAL_HOURS",
     "COLLECTOR_LAG_SECONDS",
     "SITE_METRICS_REFRESH_TS",
     "collect_site_rows",
@@ -82,6 +83,11 @@ SOURCE_FAILURES_24H = Gauge(
 SOURCE_LAST_JOB_FAILED = Gauge(
     f"{_NS}_source_last_job_failed", "该源最近一次任务是否失败（1=失败）", _LABELS
 )
+#: 采集间隔（小时）。告警阈值要按它分档：4h 的源在两次正常成功之间
+#: 天然就会「2 小时没消息」，固定 2h 阈值必然误报。
+SOURCE_INTERVAL_HOURS = Gauge(
+    f"{_NS}_source_interval_hours", "该源的采集间隔（小时）", _LABELS
+)
 COLLECTOR_LAG_SECONDS = Gauge(
     f"{_NS}_collector_lag_seconds", "全库最新文章距当前时间的秒数"
 )
@@ -97,6 +103,7 @@ _SQL_POWER = text(
         COALESCE(s.province_code, '')                         AS province,
         COALESCE(s.category, '')                              AS category,
         s.enabled                                             AS enabled,
+        s.crawl_interval_hours                                AS interval_hours,
         s.last_discovery_success_at_utc                       AS last_success,
         (SELECT MAX(a.published_at_cst) FROM articles a
           WHERE a.source_id = s.id)                           AS last_published,
@@ -122,6 +129,9 @@ _SQL_PROVINCE = text(
         COALESCE(s.province_code, '')                         AS province,
         'province_media'                                      AS category,
         (s.verification_status = 'enabled')                   AS enabled,
+        -- 省级库 sources 没有 crawl_interval_hours 列；照抄电力的列会让整页
+        -- /metrics 报 Unknown column，所有站点告警一起消失。按历史日更口径给 24。
+        24                                                    AS interval_hours,
         s.last_discovery_success_at_utc                       AS last_success,
         (SELECT MAX(a.published_at_cst) FROM articles a
           WHERE a.source_id = s.id)                           AS last_published,
@@ -146,7 +156,10 @@ _FAILED_STATES = {"failed", "retry_wait"}
 def _epoch(value: Any) -> float:
     """datetime / None → epoch 秒；无值记 0（Prometheus 里 0 表示「从没成功过」）。"""
     if isinstance(value, datetime):
-        return value.replace(tzinfo=value.tzinfo or None).timestamp()
+        # 库里存的是 naive UTC（MySQL --default-time-zone=+00:00）。
+        # 这里若按容器本地时区解释，全部 *_ts 指标会整体偏移（+08:00 就是 8 小时），
+        # SourceStale / CollectorLagHigh 会因此集体误判。
+        return value.replace(tzinfo=value.tzinfo or UTC).timestamp()
     return 0.0
 
 
@@ -183,6 +196,7 @@ def apply_rows(rows: list[dict[str, Any]]) -> float:
         SOURCE_ARTICLES_24H,
         SOURCE_FAILURES_24H,
         SOURCE_LAST_JOB_FAILED,
+        SOURCE_INTERVAL_HOURS,
     ):
         gauge.clear()
 
@@ -201,6 +215,10 @@ def apply_rows(rows: list[dict[str, Any]]) -> float:
         SOURCE_FAILURES_24H.labels(**labels).set(float(row.get("failures_24h") or 0))
         SOURCE_LAST_JOB_FAILED.labels(**labels).set(
             1.0 if str(row.get("last_status") or "") in _FAILED_STATES else 0.0
+        )
+        # 缺值时按 24h 保守处理：宁可晚报警，也不要因为指标缺项把阈值算成 0
+        SOURCE_INTERVAL_HOURS.labels(**labels).set(
+            float(row.get("interval_hours") or 24)
         )
         global_last = max(global_last, _epoch(row.get("global_last_created")))
     return global_last

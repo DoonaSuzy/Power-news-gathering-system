@@ -60,24 +60,62 @@ groups:
       # 之前只有前者，所以 412 反爬把全部站点拦住时，监控一片绿。
       # ------------------------------------------------------------------
 
-      # 站点超过 2 小时没成功采集过（且仍启用）。
+      # 站点超过「自身采集间隔 + 30 分钟」没成功采集过（且仍启用、且成功过）。
+      #
+      # 三个修正，都是生产实测暴露的：
+      # 1) 阈值按 crawl_interval_hours 分档——4h 的源在两次正常成功之间天然就会
+      #    「2 小时没消息」，固定 7200s 必然误报（实测 1h×32 / 2h×3 / 4h×11）；
+      # 2) 加 last_success_ts > 0 的 guard——从没成功过的源会让 time()-0 算出
+      #    56 年，抬阈值永远抬不掉；这类源交给 SourceNeverSucceeded 单独负责；
+      # 3) 把 (time()-last_success) 放到最左边：`A and B` 取的是 A 的值，
+      #    原表达式的 LHS 是 enabled==1，于是注解里的 $value 恒为 1，
+      #    生产上一直显示「距今 1s」。
       - alert: SourceStale
         expr: |
-          powernews_source_enabled == 1
-          and (time() - powernews_source_last_success_ts) > 7200
+          (
+            (time() - powernews_source_last_success_ts)
+            and on(source, channel, province, category)
+            (powernews_source_enabled == 1)
+            and on(source, channel, province, category)
+            (powernews_source_last_success_ts > 0)
+          ) > (powernews_source_interval_hours * 3600 + 1800)
         for: 10m
         labels:
           severity: warning
           team: crawl
         annotations:
-          summary: "站点 {{ $labels.source }} 已超 2 小时未成功采集"
-          description: "{{ $labels.channel }}/{{ $labels.source }}（{{ $labels.province }}）最近成功采集距今 {{ $value | humanizeDuration }}。"
+          summary: "站点 {{ $labels.source }} 超过采集间隔未成功"
+          description: "{{ $labels.channel }}/{{ $labels.source }}（{{ $labels.province }}）最近成功采集距今 {{ $value | humanizeDuration }}，阈值按该源自身采集间隔 + 30 分钟计算。"
+
+      # 从没成功采集过（last_success_ts == 0）。
+      #
+      # 为什么不并进 SourceStale：这 38 个源的现象是「一次都没跑成」，
+      # 处置方式也不同（先查 adapter 与站点可达性，而不是看反爬冷却）。
+      # 塞进 SourceStale 会让它们既被算成「56 年未采集」，又被 guard 掉后
+      # 永久静默——两种都不对。
+      - alert: SourceNeverSucceeded
+        expr: |
+          (powernews_source_last_success_ts == 0)
+          and on(source, channel, province, category)
+          (powernews_source_enabled == 1)
+        for: 1h
+        labels:
+          severity: warning
+          team: crawl
+        annotations:
+          summary: "站点 {{ $labels.source }} 从未成功采集"
+          description: "{{ $labels.channel }}/{{ $labels.source }} 的 last_success_ts 为 0：该源从未成功跑完一轮，优先查 adapter 配置与站点可达性，而不是反爬。"
 
       # 启用的站点近 24 小时一条没入库。
+      # 加 >0 guard：否则「从未成功」的源会同时命中本规则与 SourceNeverSucceeded，
+      # 同一件事报两遍，噪声翻倍。
       - alert: SourceNoArticles
         expr: |
-          powernews_source_enabled == 1
-          and powernews_source_articles_24h == 0
+          (powernews_source_articles_24h == 0)
+          and on(source, channel, province, category)
+          (powernews_source_enabled == 1)
+          and on(source, channel, province, category)
+          (powernews_source_last_success_ts > 0)
         for: 2h
         labels:
           severity: warning
@@ -87,17 +125,22 @@ groups:
           description: "{{ $labels.channel }}/{{ $labels.source }} 连续 24 小时没有新文章入库，检查是否被反爬拦截或栏目改版。"
 
       # 最近一次任务失败且 24 小时内失败 ≥3 次。
+      # 同样把计数放到最左边：否则 $value 取的是 last_job_failed（恒为 1），
+      # 注解会写成「失败 1 次」。
       - alert: SourceFailing
         expr: |
-          powernews_source_last_job_failed == 1
-          and powernews_source_failures_24h >= 3
+          (
+            powernews_source_failures_24h
+            and on(source, channel, province, category)
+            (powernews_source_last_job_failed == 1)
+          ) >= 3
         for: 15m
         labels:
           severity: critical
           team: crawl
         annotations:
           summary: "站点 {{ $labels.source }} 连续采集失败"
-          description: "近 24 小时失败/待重试 {{ $labels.source }} 任务 {{ $value }} 次，最近一次仍失败。"
+          description: "近 24 小时失败/待重试任务 {{ $value }} 次，最近一次仍失败。"
 
       # 全库最新文章超过 3 小时（说明整条采集链路停了）。
       - alert: CollectorLagHigh
