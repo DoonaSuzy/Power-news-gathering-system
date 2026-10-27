@@ -15,6 +15,8 @@ const props = defineProps({
   loadingMore: { type: Boolean, default: false },
   hasMore: { type: Boolean, default: false },
   total: { type: Number, default: 0 },
+  /** 空结果时的说明文案（由上层按「有站点但没稿 / 完全没站点」分别给出） */
+  emptyHint: { type: String, default: '' },
 })
 
 const emit = defineEmits(['open', 'load-more'])
@@ -85,7 +87,12 @@ function precisionHint(a) {
       <div v-for="i in 5" :key="i" class="skeleton" style="height: 62px; margin-bottom: 8px" />
     </div>
 
-    <div v-else class="empty">当前筛选条件下没有新闻。可放宽时间范围或清除主题筛选。</div>
+    <div v-else class="empty">
+      <p class="empty-title">{{ emptyHint || '当前条件下没有新闻。' }}</p>
+      <p class="muted">
+        可放宽时间范围、清除关键词，或到上方站点表确认该站点是否仍在产出。
+      </p>
+    </div>
 
     <div v-if="hasMore" class="more">
       <button :disabled="loadingMore" @click="emit('load-more')">
@@ -201,4 +208,15 @@ function precisionHint(a) {
 }
 
 .skeleton-list { padding: 12px 14px; }
+
+.empty {
+  padding: 28px 16px;
+  text-align: center;
+  background: var(--c-surface);
+  border: 1px dashed var(--c-border);
+  border-radius: var(--radius-lg);
+  font-size: 13px;
+}
+
+.empty-title { margin: 0 0 4px; font-weight: 500; }
 </style>

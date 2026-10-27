@@ -62,7 +62,10 @@ function fmtDate(value) {
           <th>数据域</th>
           <th>类别</th>
           <th class="num">文章数</th>
-          <th>最近发布</th>
+          <th>
+            最近发布
+            <span class="th-note" title="该站点已入库文章中最新的一条发布时间，不是采集成功时间">?</span>
+          </th>
           <th>状态</th>
           <th />
         </tr>
@@ -115,6 +118,19 @@ function fmtDate(value) {
 .table th { font-weight: 500; color: var(--c-muted, #666); white-space: nowrap; }
 .table tbody tr:last-child td { border-bottom: none; }
 .table tbody tr:hover { background: var(--c-hover, #f7f9fc); }
+
+.th-note {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  line-height: 14px;
+  text-align: center;
+  border-radius: 50%;
+  border: 1px solid var(--c-border);
+  font-size: 11px;
+  color: var(--c-muted, #888);
+  cursor: help;
+}
 
 .num { text-align: right; font-variant-numeric: tabular-nums; }
 .mono { font-variant-numeric: tabular-nums; }

@@ -51,10 +51,26 @@ const provinceName = computed(
 const provinceCoverage = computed(
   () => coverage.value.find((c) => c.code === feed.filters.province) || null,
 )
+const rangeLabel = computed(
+  () => RANGE_PRESETS.find((r) => r.key === feed.filters.range)?.label || '该时段',
+)
 const activeSource = computed(
   () => sites.value.find((s) => s.adapterName === feed.filters.source) || null,
 )
 const totalSites = computed(() => coverage.value.reduce((n, c) => n + c.sourceCount, 0))
+
+/**
+ * 空结果分三种情况，文案必须不同——都写「没有新闻」用户分不清是
+ * 「这个省没站点」「站点没产出」还是「筛选太窄」。
+ */
+const emptyHint = computed(() => {
+  if (!sites.value.length) return `${provinceName.value}暂无已配置站点。`
+  const covered = provinceCoverage.value?.articleCount ?? 0
+  if (covered === 0) {
+    return `${provinceName.value}已配置 ${sites.value.length} 个站点，但暂无入库文章。`
+  }
+  return `${provinceName.value}近 ${rangeLabel.value}无符合当前筛选的文章。`
+})
 const totalArticles = computed(() => coverage.value.reduce((n, c) => n + c.articleCount, 0))
 
 /** 站点概览：选省后才拉，且跟随数据域切换。 */
@@ -258,6 +274,7 @@ onMounted(async () => {
           :loading-more="feed.loadingMore.value"
           :has-more="feed.hasMore.value"
           :total="feed.total.value"
+          :empty-hint="emptyHint"
           @open="(a) => (selected = a)"
           @load-more="feed.loadMore()"
         />
