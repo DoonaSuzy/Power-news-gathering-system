@@ -491,12 +491,12 @@ def cmd_run_job(args: argparse.Namespace) -> int:
 
     if args.json:
         _print_json(stats)
-        return 0 if stats.get("status") == "succeeded" else 1
+        return 0 if stats.get("status") in ("succeeded", "partial") else 1
 
     _out("任务完成：")
     for key, value in stats.items():
         _out(f"  {key:<12}: {value}")
-    return 0 if stats.get("status") == "succeeded" else 1
+    return 0 if stats.get("status") in ("succeeded", "partial") else 1
 
 
 def cmd_worker(args: argparse.Namespace) -> int:

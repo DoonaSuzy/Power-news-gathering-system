@@ -17,7 +17,12 @@ WAIT = "wait"      # 他人持有租约，稍后重投
 ACK = "ack"        # 已终态，直接确认丢弃
 
 #: 视为终态的任务状态
-TERMINAL_STATUSES = frozenset({"succeeded", "failed", "skipped", "cancelled"})
+#:
+#: ``partial`` 必须在里面：它表示「抓到了，但被预算/阻断提前收手」，
+#: 是**成功的一部分**而不是失败。未列在这里时，CLI 退出码为 1 → worker 不 ACK
+#: → 10 分钟后重认领 → 重跑（且 consider() 会跳过已登记候选，补不回漏抓的）
+#: → 三次后 mark_job_failed 把 partial 覆盖成 failed，连"抓到过"都丢了。
+TERMINAL_STATUSES = frozenset({"succeeded", "partial", "failed", "skipped", "cancelled"})
 
 
 @dataclass(frozen=True, slots=True)

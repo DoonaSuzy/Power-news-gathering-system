@@ -409,7 +409,7 @@ class Repository:
             row = cur.fetchone()
             if not row:
                 raise JobNotFound(f"任务不存在: {job_id}")
-            if row["status"] in ("succeeded", "failed", "skipped"):
+            if row["status"] in ("succeeded", "partial", "failed", "skipped"):
                 raise LeaseBusy(f"任务已终态: {row['status']}")
 
             holder = row.get("lease_owner")
