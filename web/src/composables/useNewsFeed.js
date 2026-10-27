@@ -29,7 +29,11 @@ export function useNewsFeed() {
 
   /** 当前筛选条件。字段与 UI 控件一一对应，便于双向绑定。 */
   const filters = reactive({
+    // 数据域：all / power / province。默认 all —— 省级库未接入时后端会
+    // 自动降级为 power，并在响应的 channels 字段里如实标注。
+    channel: 'all',
     province: '',
+    source: '',
     region: '',
     topic: '',
     category: '',
@@ -105,15 +109,33 @@ export function useNewsFeed() {
   /** 重置全部筛选。 */
   function reset() {
     Object.assign(filters, {
-      province: '', region: '', topic: '', category: '',
+      channel: 'all',
+      province: '', source: '', region: '', topic: '', category: '',
       keyword: '', range: 'week', since: '', until: '',
     })
+  }
+
+  /**
+   * 清空结果（不清筛选条件）。
+   *
+   * 「未选省份不展示数据」需要它：用户把省份清空时，列表必须立刻变空，
+   * 而不是继续显示上一个省的文章——那会让人以为筛选没生效。
+   */
+  function clear() {
+    token += 1            // 让在途请求的响应失效
+    items.value = []
+    total.value = 0
+    page.value = 1
+    pages.value = 0
+    error.value = ''
+    loading.value = false
+    loadingMore.value = false
   }
 
   return {
     items, total, page, pages, loading, loadingMore, error, lastLoadedAt,
     filters, activeFilterCount, hasMore,
-    reload, loadMore, reset,
+    reload, loadMore, reset, clear,
     pageSize: PAGE_SIZE,
   }
 }

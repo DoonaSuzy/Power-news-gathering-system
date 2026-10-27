@@ -74,6 +74,8 @@ export function toQueryParams(filters) {
     province: filters.province || filters.region || undefined,
     category: filters.category || undefined,
     keyword: topic?.keyword || filters.keyword || undefined,
+    channel: filters.channel || undefined,
+    source: filters.source || undefined,
   }
   if (filters.range && filters.range !== 'all') {
     params.range = filters.range

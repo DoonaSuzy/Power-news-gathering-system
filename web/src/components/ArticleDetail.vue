@@ -17,7 +17,6 @@
  * 抽取式选的，还是本地规则匹配的 —— 三者的可信度并不相同。
  */
 import { computed, ref, watch } from 'vue'
-import { ai } from '../api/ai.js'
 import { fetchArticleDetail } from '../api/news.js'
 import { matchDimensions } from '../utils/lexicon.js'
 
@@ -31,15 +30,7 @@ const detail = ref(null)
 const loadingDetail = ref(false)
 const detailError = ref('')
 
-const explain = ref(null)
-const explainLoading = ref(false)
-const summary = ref(null)
-const summaryLoading = ref(false)
-const tags = ref(null)
-const tagsLoading = ref(false)
-const aiError = ref('')
-
-/** 本地即时标签（不耗 AI 调用），与 AI 标签并列展示，便于对照。 */
+/** 本地即时标签（纯前端词表匹配，不调用任何模型）。 */
 const localChips = computed(() => {
   const text = `${props.article.title} ${props.article.excerpt}`
   return matchDimensions(text)
@@ -93,13 +84,6 @@ function markBroken(img) {
   brokenImages.value = new Set([...brokenImages.value, img.object_key || img.url])
 }
 
-const METHOD_LABEL = {
-  llm: 'AI 模型',
-  extractive: '抽取式',
-  'local-rule': '本地规则',
-  none: '不可用',
-}
-
 /** 正文拆段。
  *
  * 为什么不用 ``white-space: pre-wrap``：那样换行是有了，但**段与段之间没有间距**，
@@ -142,10 +126,6 @@ function bumpSize(delta) {
 
 watch(sizeIndex, applyReadingSize, { immediate: true })
 
-function methodLabel(m) {
-  return METHOD_LABEL[m] || m || '未知'
-}
-
 async function loadDetail() {
   loadingDetail.value = true
   detailError.value = ''
@@ -158,57 +138,11 @@ async function loadDetail() {
   }
 }
 
-async function runExplain() {
-  explainLoading.value = true
-  aiError.value = ''
-  try {
-    explain.value = await ai.explain({ article: { ...props.article, ...detail.value } })
-  } catch (err) {
-    aiError.value = err?.message || String(err)
-  } finally {
-    explainLoading.value = false
-  }
-}
-
-async function runSummary() {
-  summaryLoading.value = true
-  aiError.value = ''
-  try {
-    const article = { ...props.article, ...detail.value }
-    summary.value = await ai.summarize({
-      articles: [article],
-      window: { label: '本篇' },
-      maxPoints: 6,
-      maxHighlights: 3,
-    })
-  } catch (err) {
-    aiError.value = err?.message || String(err)
-  } finally {
-    summaryLoading.value = false
-  }
-}
-
-async function runTags() {
-  tagsLoading.value = true
-  aiError.value = ''
-  try {
-    tags.value = await ai.tag({ article: { ...props.article, ...detail.value } })
-  } catch (err) {
-    aiError.value = err?.message || String(err)
-  } finally {
-    tagsLoading.value = false
-  }
-}
-
 /** 切换文章时重置所有派生状态，否则会短暂显示上一篇的解析结果。 */
 watch(
   () => props.article?.id,
   () => {
     detail.value = null
-    explain.value = null
-    summary.value = null
-    tags.value = null
-    aiError.value = ''
     detailError.value = ''
     loadDetail()
   },
@@ -238,19 +172,7 @@ function onKeydown(e) {
         <button @click="emit('close')">关闭</button>
       </header>
 
-      <!-- AI 工具条：全部按钮手动触发，无任何自动调用 -->
       <div class="tools">
-        <div class="ai">
-          <button :disabled="explainLoading" @click="runExplain">
-            {{ explainLoading ? '解析中…' : 'AI 智能解析' }}
-          </button>
-          <button :disabled="summaryLoading" @click="runSummary">
-            {{ summaryLoading ? '总结中…' : 'AI 要点总结' }}
-          </button>
-          <button :disabled="tagsLoading" @click="runTags">
-            {{ tagsLoading ? '打标中…' : 'AI 多维标签' }}
-          </button>
-        </div>
         <div class="reading-size" title="正文字号">
           <span>字号</span>
           <button :disabled="sizeIndex === 0" @click="bumpSize(-1)">A−</button>
@@ -259,67 +181,8 @@ function onKeydown(e) {
         </div>
       </div>
 
-      <p v-if="aiError" class="banner error">AI 调用失败：{{ aiError }}</p>
-
       <div class="body">
-        <!-- AI 结果区 -->
-        <section v-if="summary" class="panel">
-          <h3>
-            AI 要点总结
-            <span class="tag primary">{{ summary.provider }}</span>
-            <span class="tag">{{ methodLabel(summary.method) }}</span>
-          </h3>
-          <p class="headline">{{ summary.headline }}</p>
-          <ul v-if="summary.keyPoints?.length" class="points">
-            <li v-for="(p, i) in summary.keyPoints" :key="i">
-              {{ p.text }}
-              <em v-if="p.reasons?.length" class="reasons">{{ p.reasons.join(' · ') }}</em>
-            </li>
-          </ul>
-          <ul v-if="summary.highlights?.length" class="points highlights">
-            <li v-for="(p, i) in summary.highlights" :key="`h${i}`">
-              <strong>亮点</strong> {{ p.text }}
-            </li>
-          </ul>
-          <p v-for="(c, i) in summary.caveats" :key="i" class="banner warn">{{ c }}</p>
-        </section>
-
-        <section v-if="explain" class="panel">
-          <h3>
-            AI 智能解析
-            <span class="tag primary">{{ explain.provider }}</span>
-            <span class="tag">{{ methodLabel(explain.method) }}</span>
-          </h3>
-          <ul v-if="explain.paragraphs?.length" class="points">
-            <li v-for="(p, i) in explain.paragraphs" :key="i">
-              <span class="tag">{{ p.role }}</span> {{ p.text }}
-            </li>
-          </ul>
-          <div v-if="explain.entities?.length" class="chips">
-            <span v-for="e in explain.entities" :key="e.text" class="tag">{{ e.text }}</span>
-          </div>
-          <dl v-if="explain.terms?.length" class="terms">
-            <template v-for="t in explain.terms" :key="t.term">
-              <dt>{{ t.term }}</dt>
-              <dd>{{ t.gloss }}</dd>
-            </template>
-          </dl>
-          <p v-for="(c, i) in explain.caveats" :key="i" class="banner warn">{{ c }}</p>
-        </section>
-
-        <section v-if="tags" class="panel">
-          <h3>
-            AI 多维度标签
-            <span class="tag primary">{{ tags.provider }}</span>
-            <span class="tag">{{ methodLabel(tags.method) }}</span>
-          </h3>
-          <div v-for="(words, dim) in tags.dimensions" :key="dim" class="dim-row">
-            <span class="dim-name">{{ dim }}</span>
-            <span v-for="w in words" :key="w" class="tag primary">{{ w }}</span>
-          </div>
-        </section>
-
-        <!-- 本地即时标签：与 AI 标签对照，也保证 AI 不可用时仍有标签可看 -->
+        <!-- 本地即时标签：纯前端词表匹配，不依赖任何外部服务 -->
         <section class="panel">
           <h3>本地即时标签 <span class="tag">免调用</span></h3>
           <div v-for="(words, dim) in localChips" :key="dim" class="dim-row">

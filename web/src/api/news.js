@@ -26,6 +26,9 @@ function toArticle(raw) {
     timePrecision: raw.time_precision || 'unknown',
     url: raw.url || '',
     qualityFlags: raw.quality_flags || '[]',
+    // 数据域：power / province。合并后同一条列表可能混两个域，
+    // 不映射这个字段，界面上就无法区分「电网稿」和「党报稿」。
+    channel: raw.channel || 'power',
   }
 }
 
@@ -48,6 +51,7 @@ export async function fetchArticles(params = {}, options = {}) {
       since: params.since || undefined,
       until: params.until || undefined,
       exclude_duplicates: params.excludeDuplicates ? 'true' : undefined,
+      channel: params.channel || undefined,
     },
     ...options,
   })
@@ -132,4 +136,50 @@ export async function fetchSources(params = {}, options = {}) {
 /** 中台健康状态（顶栏用来显示「中台可达 / 降级」）。 */
 export async function fetchHealth(options = {}) {
   return apiGet('/health', options)
+}
+
+/**
+ * 按来源统计产出（站点概览表用）。
+ *
+ * 与 `/sources` 的区别：这里带**文章数**，且支持按省过滤——
+ * 选省后要回答「这个省有哪些站点、各产出多少」，只有这个接口能做到。
+ */
+export async function fetchSourceStats(params = {}, options = {}) {
+  const data = await apiGet('/stats/sources', {
+    params: {
+      limit: params.limit ?? 200,
+      channel: params.channel || undefined,
+      province: params.province || undefined,
+    },
+    ...options,
+  })
+  return (data?.items ?? []).map((s) => ({
+    id: s.id,
+    name: s.name || s.adapter_name || '未命名站点',
+    adapterName: s.adapter_name || '',
+    channel: s.channel || 'power',
+    category: s.category || '',
+    provinceCode: s.province_code || null,
+    enabled: Boolean(s.enabled),
+    status: s.status || (s.enabled ? 'enabled' : 'disabled'),
+    articleCount: Number(s.article_count || 0),
+    emptyBody: Number(s.empty_body || 0),
+    noTime: Number(s.no_time || 0),
+    lastPublishedAt: s.last_published_at || null,
+  }))
+}
+
+/** 省份覆盖度（文章数、站点数），用于空状态与顶部摘要。 */
+export async function fetchProvinceCoverage(params = {}, options = {}) {
+  const data = await apiGet('/provinces/coverage', {
+    params: { channel: params.channel || undefined },
+    ...options,
+  })
+  return (data?.items ?? []).map((r) => ({
+    code: r.code,
+    name: r.name,
+    sourceCount: Number(r.source_count || 0),
+    articleCount: Number(r.article_count || 0),
+    lastPublishedAt: r.last_published_at || null,
+  }))
 }
