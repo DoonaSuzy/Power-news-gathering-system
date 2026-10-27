@@ -216,6 +216,25 @@ class Repository:
             )
             return int(cur.rowcount or 0)
 
+    def list_due_retry_jobs(self, conn, *, limit: int = 200) -> list[int]:
+        """取「退避已到点」的任务 id，供调度器重投。
+
+        为什么由调度器做、而不是 worker 自己等：worker 端只能看见一条消息，
+        要「等到点」就得 sleep 或反复重投——前者阻塞消费，后者会让队列空转。
+        生产实测过后果：155 个 retry_wait 任务把 worker 的等待分支打成了
+        每 5 秒一次的重投循环，Redis 里堆了 1,955 条消息，真正的抓取被饿死。
+        放到调度器里，每轮只查一次，节流天然成立。
+        """
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM crawl_jobs "
+                "WHERE status='retry_wait' "
+                "AND (retry_at_utc IS NULL OR retry_at_utc <= UTC_TIMESTAMP()) "
+                "ORDER BY retry_at_utc LIMIT %s",
+                (limit,),
+            )
+            return [int(r["id"]) for r in cur.fetchall()]
+
     def save_article_images(self, conn, *, article_id: int, source_id: int,
                             refs: list) -> int:
         """登记文章配图（**只写 URL，不下载**）。

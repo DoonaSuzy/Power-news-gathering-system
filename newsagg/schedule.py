@@ -120,6 +120,16 @@ def run_coordinator(*, force: bool = False, dry_run: bool = False,
         except Exception as exc:  # noqa: BLE001
             log.error("回收僵死任务失败（不影响本轮协调）: %s", exc)
 
+        # 到点的重试任务在这里重投。worker 只负责「丢弃未到点的消息」，
+        # 不 sleep、不反复 publish —— 否则退避期间会一直空转（生产踩过）。
+        due_ids: list[int] = []
+        try:
+            due_ids = repo.list_due_retry_jobs(conn, limit=200)
+            if due_ids:
+                log.info("到点重投 %d 个 retry_wait 任务", len(due_ids))
+        except Exception as exc:  # noqa: BLE001
+            log.error("查询到点重试任务失败（不影响本轮协调）: %s", exc)
+
         run_id = repo.create_run(conn, trigger)
         sources = repo.list_sources(conn, enabled_only=True)
         considered = len(sources)
@@ -178,15 +188,17 @@ def run_coordinator(*, force: bool = False, dry_run: bool = False,
         conn.close()
 
     published = 0
-    if job_ids and not dry_run:
+    to_publish = job_ids + due_ids
+    if to_publish and not dry_run:
         try:
-            published = publish_jobs(job_ids, {"trigger": trigger}, queue)
+            published = publish_jobs(to_publish, {"trigger": trigger}, queue)
         except Exception as exc:  # noqa: BLE001
             log.error("投递失败（任务已入库，可稍后重投）: %s", exc)
     elif dry_run:
         log.info("[dry-run] 将建批 %d 条，不投递", len(job_ids))
 
-    summary = {"considered": considered, "created": len(job_ids), "published": published}
+    summary = {"considered": considered, "created": len(job_ids),
+               "retried": len(due_ids), "published": published}
     log.info("协调完成 %s", summary)
     return summary
 

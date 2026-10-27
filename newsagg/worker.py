@@ -98,14 +98,15 @@ def take_assignment(queue: StreamQueue, db: Database, owner: str) -> bool:
     if delivery.action == WAIT:
         log.info("job %s 稍后重试：%s", job_id, delivery.reason)
         if delivery.reason == "retry_not_due":
-            # 退避未到点。**不能**走下面那条 publish+ack：
-            # 那样每 5 秒重投一次、空转到点为止，而且新消息的 times_delivered
-            # 从 1 重新计数，等于把「等待」也当成「一次失败尝试」。
-            # 这里先 ack（把消息从 PEL 摘掉，sleep 期间不会被 XAUTOCLAIM 抢走），
-            # 等到点再投一条新的。
+            # 退避未到点：这条消息本身已经没有价值了，直接确认丢弃。
+            # 不能像租约等待那样 publish 一条新的——那会变成「每 5 秒重投一次」
+            # 的空转（生产实测 155 个任务堆出 1,955 条积压，把真实抓取饿死）；
+            # 也不能留在 PEL 等 XAUTOCLAIM——认领会累加 times_delivered，
+            # 把「等待」算成失败尝试。
+            # 到点重投由调度器每轮统一做（repo.list_due_retry_jobs）。
+            log.info("job %s 退避中（剩余 %ds），交给调度器到点重投",
+                     job_id, int(delivery.retry_in_seconds or 0))
             queue.ack(message_id)
-            time.sleep(min(max(delivery.retry_in_seconds or 0, 1), _WAIT_RESUBMIT_SECONDS))
-            queue.publish([job_id])
             return True
         # 租约被他人持有：重新投递一条新消息，延后处理；原消息确认掉避免堆积
         queue.publish([job_id])
