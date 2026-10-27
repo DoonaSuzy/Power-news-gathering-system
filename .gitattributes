@@ -1,0 +1,8 @@
+# 换行符约定
+#
+# 这两类文件会被**直接放进 Linux 容器执行**，必须强制 LF：
+# Windows 上 checkout 出来的 CRLF 会让 `set -u` 变成 `set: -: invalid option`，
+# 容器起来就崩，而且日志里只写「command not found」，很难第一眼定位。
+# （2026-10-28 部署时 backup.sh 就是这么崩的。）
+*.sh   text eol=lf
+Dockerfile text eol=lf

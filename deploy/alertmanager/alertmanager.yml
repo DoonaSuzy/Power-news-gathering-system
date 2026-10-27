@@ -24,9 +24,6 @@
 
 global:
   resolve_timeout: 5m
-  external_labels:
-    monitor: power-news
-    env: production
 
 route:
   receiver: silent
