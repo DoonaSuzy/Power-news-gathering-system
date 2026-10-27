@@ -22,6 +22,8 @@ export function useNewsFeed() {
   const total = ref(0)
   const page = ref(1)
   const pages = ref(0)
+  /** 是否因跨域扫描窗口封顶而截断可翻页数（后端 pages 已封顶） */
+  const truncated = ref(false)
   const loading = ref(false)
   const loadingMore = ref(false)
   const error = ref('')
@@ -71,6 +73,7 @@ export function useNewsFeed() {
       total.value = data.total
       page.value = data.page
       pages.value = data.pages
+      truncated.value = Boolean(data.truncated)
       lastLoadedAt.value = Date.now()
       return { ok: true, reason, count: data.items.length, total: data.total }
     } catch (err) {
@@ -87,6 +90,9 @@ export function useNewsFeed() {
     if (!hasMore.value || loadingMore.value) return
     const my = token
     loadingMore.value = true
+    // 先清上一条错误：否则上一次失败的红条会一直挂着，
+    // 用户重试成功之后仍然看到「加载失败」，比不提示更误导。
+    error.value = ''
     try {
       const data = await fetchArticles({
         ...toQueryParams(filters),
@@ -94,9 +100,14 @@ export function useNewsFeed() {
         pageSize: PAGE_SIZE,
       })
       if (my !== token) return
-      // 跨页去重：中台按发布时间倒序，新稿涌入时下一页可能与本页重叠
-      const seen = new Set(items.value.map((a) => a.id))
-      items.value = [...items.value, ...data.items.filter((a) => !seen.has(a.id))]
+      // 跨页去重：中台按发布时间倒序，新稿涌入时下一页可能与本页重叠。
+      // 键必须带数据域——两库 id 各自自增，`channel=all` 下会重号，
+      // 只按 id 去重会把另一个域的同编号文章整条吞掉。
+      const seen = new Set(items.value.map((a) => `${a.channel}:${a.id}`))
+      items.value = [
+        ...items.value,
+        ...data.items.filter((a) => !seen.has(`${a.channel}:${a.id}`)),
+      ]
       page.value = data.page
       pages.value = data.pages
     } catch (err) {
@@ -127,13 +138,14 @@ export function useNewsFeed() {
     total.value = 0
     page.value = 1
     pages.value = 0
+    truncated.value = false
     error.value = ''
     loading.value = false
     loadingMore.value = false
   }
 
   return {
-    items, total, page, pages, loading, loadingMore, error, lastLoadedAt,
+    items, total, page, pages, truncated, loading, loadingMore, error, lastLoadedAt,
     filters, activeFilterCount, hasMore,
     reload, loadMore, reset, clear,
     pageSize: PAGE_SIZE,

@@ -10,12 +10,18 @@
  * 用户看到的是代码而不是「广东」，而且各浏览器过滤行为不一致。
  */
 import { computed, nextTick, ref } from 'vue'
+import { NATIONWIDE } from '../utils/topics.js'
 
 const props = defineProps({
   provinces: { type: Array, default: () => [] },
   modelValue: { type: String, default: '' },
   /** 是否提供「全国 / 不限」项（不过滤省份） */
   allowAll: { type: Boolean, default: false },
+  /**
+   * 「全国」项的选中值。默认取后端同款字面量 ``全国``：
+   * 空串已被「未选择」占用，选全国若也用空串，两者在状态上无法区分。
+   */
+  allValue: { type: String, default: NATIONWIDE },
 })
 const emit = defineEmits(['update:modelValue', 'change'])
 
@@ -25,6 +31,8 @@ const activeIndex = ref(-1)
 const inputEl = ref(null)
 
 const selectedName = computed(() => {
+  // 「全国」不在省份字典里，单独认一下，否则选完输入框会退回「搜索省份…」
+  if (props.modelValue === props.allValue) return '全国 / 不限'
   const found = props.provinces.find((p) => p.code === props.modelValue)
   return found ? found.name : ''
 })
@@ -41,7 +49,7 @@ const options = computed(() => {
     )
   })
   if (props.allowAll && (!q || '全国不限'.includes(q))) {
-    return [{ code: '', name: '全国 / 不限', shortName: '全国' }, ...list]
+    return [{ code: props.allValue, name: '全国 / 不限', shortName: '全国' }, ...list]
   }
   return list
 })

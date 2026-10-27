@@ -130,9 +130,24 @@ async function loadDetail() {
   loadingDetail.value = true
   detailError.value = ''
   try {
-    detail.value = await fetchArticleDetail(props.article.id)
+    // **必须带 channel**：两个数据域的 id 各自自增且区间重叠，
+    // 不带域取详情会在「同编号两条」时拿到另一篇（后端此时返回 409，
+    // 但仍应主动指明域——409 是兜底，不是常规路径）。
+    detail.value = await fetchArticleDetail(props.article.id, { channel: props.article.channel })
+
+    // 运行时守卫：后端回传的域与列表不一致，说明透传没生效或后端又改回了
+    // 「电力优先」。这比测试更早发现回归——用户当场就能看到提示。
+    if (detail.value.channel && props.article.channel &&
+        detail.value.channel !== props.article.channel) {
+      detailError.value =
+        `详情数据域（${detail.value.channel}）与列表（${props.article.channel}）不一致，` +
+        '可能取到了同编号的另一篇文章，请关闭后重试'
+    }
   } catch (err) {
-    detailError.value = err?.message || String(err)
+    detailError.value =
+      err?.code === 4002
+        ? '该编号在电力与省级两个数据域都有记录（历史编号重叠），请回到列表重新打开'
+        : (err?.message || String(err))
   } finally {
     loadingDetail.value = false
   }

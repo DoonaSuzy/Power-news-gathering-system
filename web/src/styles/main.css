@@ -155,6 +155,10 @@ a:hover {
 .tag.ok { background: var(--c-ok-soft); border-color: #a7f3d0; color: var(--c-ok); }
 .tag.danger { background: var(--c-danger-soft); border-color: #fecaca; color: var(--c-danger); }
 
+/* 数据域标签：站点表与文章列表共用，避免两处各写一份色值然后慢慢漂 */
+.tag.power { color: #185fa5; background: #e6f1fb; border-color: #b5d4f4; }
+.tag.province { color: #534ab7; background: #eeedfe; border-color: #cecbf6; }
+
 .muted { color: var(--c-muted); }
 .mono { font-family: var(--mono); font-size: 12px; }
 

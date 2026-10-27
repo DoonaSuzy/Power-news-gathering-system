@@ -8,6 +8,7 @@
  */
 import { computed } from 'vue'
 import { matchDimensions } from '../utils/lexicon.js'
+import { CHANNEL_LABELS } from '../utils/topics.js'
 
 const props = defineProps({
   items: { type: Array, default: () => [] },
@@ -17,9 +18,17 @@ const props = defineProps({
   total: { type: Number, default: 0 },
   /** 空结果时的说明文案（由上层按「有站点但没稿 / 完全没站点」分别给出） */
   emptyHint: { type: String, default: '' },
+  /** 标题由上层给：它还带着「当前数据域」的信息，组件不该自己猜 */
+  title: { type: String, default: '新闻' },
+  /** 查询失败原文。非空时**必须**走错误态，不能落进「没有新闻」 */
+  error: { type: String, default: '' },
+  /** 是否因扫描窗口封顶而截断了可翻页数 */
+  truncated: { type: Boolean, default: false },
+  /** 后端给的可翻页数（封顶后即扫描窗口内的页数） */
+  pages: { type: Number, default: 0 },
 })
 
-const emit = defineEmits(['open', 'load-more'])
+const emit = defineEmits(['open', 'load-more', 'retry'])
 
 /** 预计算每条卡片的标签，避免模板里反复计算。 */
 const decorated = computed(() =>
@@ -56,14 +65,21 @@ function precisionHint(a) {
   <section class="list-wrap">
     <header class="list-head">
       <h2>
-        电力新闻
+        {{ title }}
         <span class="muted">命中 {{ total.toLocaleString() }} 条</span>
       </h2>
       <span v-if="loading" class="muted"><span class="spinner" /> 加载中</span>
     </header>
 
     <ul v-if="decorated.length" class="list">
-      <li v-for="a in decorated" :key="a.id" class="card" @click="emit('open', a)">
+      <!-- key 必须带数据域：两库 id 各自自增，全国视图下 1–2735 会重号，
+           只用 id 会让 Vue 复用错误的 DOM 节点（表现为点开是另一条）。 -->
+      <li
+        v-for="a in decorated"
+        :key="`${a.channel}:${a.id}`"
+        class="card"
+        @click="emit('open', a)"
+      >
         <div class="card-main">
           <h3>{{ a.title }}</h3>
           <p class="excerpt">{{ a.excerpt || '（无摘要，点开查看详情）' }}</p>
@@ -72,6 +88,8 @@ function precisionHint(a) {
           </div>
         </div>
         <div class="card-aside">
+          <!-- 混显时必须能一眼分辨「电网稿」和「党报稿」 -->
+          <span class="tag" :class="a.channel">{{ CHANNEL_LABELS[a.channel] || a.channel }}</span>
           <span class="src">{{ a.sourceName }}</span>
           <span class="muted">{{ a.provinceName || a.provinceCode || '全国' }}</span>
           <span class="muted">
@@ -87,6 +105,14 @@ function precisionHint(a) {
       <div v-for="i in 5" :key="i" class="skeleton" style="height: 62px; margin-bottom: 8px" />
     </div>
 
+    <!-- 错误态必须排在空态之前：Key 失效时若显示「没有新闻」，
+         用户会以为是这个省没数据，而真正的原因是没权限。 -->
+    <div v-else-if="error" class="empty">
+      <p class="empty-title">加载失败：{{ error }}</p>
+      <p class="muted">这不是「该省没有数据」，而是请求本身失败了。</p>
+      <button @click="emit('retry')">重试</button>
+    </div>
+
     <div v-else class="empty">
       <p class="empty-title">{{ emptyHint || '当前条件下没有新闻。' }}</p>
       <p class="muted">
@@ -99,6 +125,12 @@ function precisionHint(a) {
         {{ loadingMore ? '加载中…' : '加载更多' }}
       </button>
     </div>
+
+    <!-- 跨域查询的可翻页数被扫描窗口封顶，到这里就翻不动了，得说清楚 -->
+    <p v-else-if="truncated" class="muted truncate-hint">
+      已到分页上限：共 {{ total.toLocaleString() }} 条，只能翻到前 {{ pages }} 页。
+      其余请用「导出 CSV」或缩小时间范围。
+    </p>
   </section>
 </template>
 
@@ -219,4 +251,22 @@ function precisionHint(a) {
 }
 
 .empty-title { margin: 0 0 4px; font-weight: 500; }
+
+/* 错误态里的重试按钮：与「加载更多」同款，但在空面板里要留点间距 */
+.empty button {
+  margin-top: 10px;
+  padding: 4px 14px;
+  border: 1px solid var(--c-border);
+  border-radius: var(--radius-md);
+  background: var(--c-surface);
+  cursor: pointer;
+}
+
+/* 达分页上限的说明：它不是错误，不该抢视觉焦点 */
+.truncate-hint {
+  margin: 0;
+  padding: 8px 14px 0;
+  text-align: center;
+  font-size: 12px;
+}
 </style>

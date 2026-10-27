@@ -59,6 +59,63 @@ export function findTopic(key) {
 }
 
 /**
+ * 数据域中文名。
+ *
+ * 与后端 ``newsplatform/services/channel_service.py`` 的 ``CHANNEL_LABELS``
+ * 同一口径（那边是接口文档与 /channels 的 label），**改这里要同步那边**。
+ * 列表标题与卡片标签都读它，避免「下拉写全部数据域、标题写电力新闻」这种两套说法。
+ */
+export const CHANNEL_LABELS = {
+  all: '全部新闻',
+  power: '电力行业新闻',
+  province: '省级官方新闻',
+}
+
+/**
+ * 「全国 / 不限」的取值。
+ *
+ * 必须与后端 ``core/provinces.py`` 的 ``_NO_FILTER`` 同字面量：``App.loadSites()``
+ * 把 ``filters.province`` **直接**透给 ``/stats/sources``，不走本文件的
+ * ``toQueryParams``；用前端自造哨兵值（如 ``__all__``）会在那里 400。
+ */
+export const NATIONWIDE = '全国'
+
+const pad2 = (n) => String(n).padStart(2, '0')
+
+/**
+ * 判断「这个数据域的数据有多旧」，并生成一句人话。
+ *
+ * 省级域是**历史快照**（收录停在 2026-10-10），但界面一直按「最新新闻」呈现，
+ * 用户会以为看到的是实时数据。这里只负责算与措辞，阈值默认 3 天：
+ * 该域本来是日更，跨个周末也不会断 3 天，超过就不是正常节奏了。
+ *
+ * @param {string|null} latestIso 最新一篇文章的发布时间（``/channels`` 的 latest_published_at）
+ * @param {Date} now 便于测试注入
+ * @param {{staleDays?: number, scope?: string}} [opts]
+ * @returns {{stale: boolean, days: number|null, date: string, text: string}}
+ */
+export function describeFreshness(latestIso, now = new Date(), { staleDays = 3, scope = '省级' } = {}) {
+  if (!latestIso) return { stale: false, days: null, date: '', text: '' }
+  const then = new Date(String(latestIso).replace(' ', 'T'))
+  if (Number.isNaN(then.getTime())) return { stale: false, days: null, date: '', text: '' }
+
+  const days = Math.floor((now.getTime() - then.getTime()) / 86_400_000)
+  const date = `${then.getFullYear()}-${pad2(then.getMonth() + 1)}-${pad2(then.getDate())}`
+  if (days <= staleDays) return { stale: false, days, date, text: '' }
+
+  return {
+    stale: true,
+    days,
+    date,
+    // 措辞刻意避开「故障 / 失败 / 异常」：这是数据边界，不是系统坏了。
+    // 也不写「停更于」——latest_published_at 是**最新文章发布时间**，不是采集成功时间。
+    text:
+      `${scope}数据为历史快照：收录截至 ${date}（距今 ${days} 天）。` +
+      '该域不再新增，仅供参考；查最新电力新闻请把「数据域」切到「电力」。',
+  }
+}
+
+/**
  * 把 UI 选中的维度整理成中台参数。
  *
  * **时间参数只发一种**：``range`` 与 ``since``/``until`` 在中台是互斥的，
@@ -71,6 +128,9 @@ export function findTopic(key) {
 export function toQueryParams(filters) {
   const topic = findTopic(filters.topic)
   const params = {
+    // 「全国」故意原样透传：后端据此解析为「不过滤省份」（与 all/全部/不限同义）。
+    // **不要**在这里把 NATIONWIDE 转成空串——空串会被 buildQuery 丢掉，
+    // 于是「选了全国」和「什么都没选」在请求上变得无法区分。
     province: filters.province || filters.region || undefined,
     category: filters.category || undefined,
     keyword: topic?.keyword || filters.keyword || undefined,

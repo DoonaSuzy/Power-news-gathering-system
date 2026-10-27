@@ -10,6 +10,8 @@ import { computed } from 'vue'
 const props = defineProps({
   sites: { type: Array, default: () => [] },
   loading: { type: Boolean, default: false },
+  /** 当前作用域的名字（省份名，或「全国」）——空态文案要能说清是哪个范围 */
+  scopeLabel: { type: String, default: '该省' },
 })
 
 const emit = defineEmits(['pick'])
@@ -53,7 +55,7 @@ function fmtDate(value) {
     </header>
 
     <p v-if="loading" class="muted pad">加载中…</p>
-    <p v-else-if="!sites.length" class="muted pad">该省暂无已配置的站点。</p>
+    <p v-else-if="!sites.length" class="muted pad">{{ scopeLabel }}暂无已配置的站点。</p>
 
     <table v-else class="table">
       <thead>
@@ -137,16 +139,8 @@ function fmtDate(value) {
 .pad { padding: 16px 14px; }
 .actions { text-align: right; }
 
-.tag {
-  display: inline-block;
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 12px;
-  border: 1px solid var(--c-border);
-}
-
-.tag.power { color: #185fa5; background: #e6f1fb; border-color: #b5d4f4; }
-.tag.province { color: #534ab7; background: #eeedfe; border-color: #cecbf6; }
+/* 数据域标签的样式在 styles/main.css（与文章列表共用一份）；
+   scoped 样式不能跨组件，复制第三份就是第三个漂移源。 */
 
 .link {
   border: none;
