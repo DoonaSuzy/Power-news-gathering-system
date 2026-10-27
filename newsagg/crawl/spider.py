@@ -286,7 +286,6 @@ class SiteSpider(scrapy.Spider):
 
     def _store(self, detail: DetailParse, url: str, nh: str, parsed) -> None:
         paragraphs = clean_paragraphs(detail.paragraphs)
-        flags = quality_flags(paragraphs, is_media_only=detail.media_only)
         cst = parsed.value
 
         # 时间可信度护栏：页脚/版权行里的年份会被误当成发布时间
@@ -298,13 +297,27 @@ class SiteSpider(scrapy.Spider):
         utc = to_utc_naive(cst) if cst else None
         # 详情页标题缺失时，兜底用列表页标题
         title = clean_title(detail.title) or clean_title(self.session.list_title_for(nh))
+        source_name = clean_source(detail.source_name)
+
+        # 质量标记必须等 title / source_name / 护栏后的 cst 都算完再打。
+        # 原先这一行在函数开头，三个实参全没传 → no_title / no_source / no_time
+        # 恒为真（生产抽样 300 条全中），质量统计与「按标记筛选」因此完全失真。
+        # 传 cst 而不是 parsed.value：1956/2610 这类脏日期被护栏置空后，
+        # 本来就该算「没有可信时间」。
+        flags = quality_flags(
+            paragraphs,
+            is_media_only=detail.media_only,
+            title=title,
+            source_name=source_name,
+            published=cst,
+        )
 
         self.session.store_detail(
             url=normalize_url(url),
             url_hash=nh,
             title=title,
             paragraphs=paragraphs,
-            source_name=clean_source(detail.source_name),
+            source_name=source_name,
             published_cst=cst,
             published_utc=utc,
             time_precision=(parsed.precision if cst else "unknown"),
