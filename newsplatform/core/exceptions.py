@@ -160,6 +160,16 @@ class UpstreamUnavailable(AppError):
     code = 5001
 
 
+class ChannelUnavailable(UpstreamUnavailable):
+    """请求了未接入的数据域（如未配置省级库却要 ``channel=province``）。
+
+    单独一个业务码，是为了让客户端能区分「依赖挂了，稍后重试」与
+    「这个域根本没接，重试也没用」。
+    """
+
+    code = 5002
+
+
 class InternalError(AppError):
     status_code = 500
     code = 5000

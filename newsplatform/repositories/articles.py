@@ -44,6 +44,10 @@ class ArticleQuery:
     exclude_duplicates: bool = False
     page: int = 1
     page_size: int = 20
+    #: 数据域：``power`` / ``province`` / ``all``。
+    #: 默认 ``all``——对外只有一个入口，客户端不传就应该看到全部新闻；
+    #: 省级库未接入时服务层自动降级为 ``power``，不会报错。
+    channel: str = "all"
 
 
 class ArticleRepository(BaseRepository):
@@ -158,6 +162,18 @@ class ArticleRepository(BaseRepository):
             count_from=self._paginate_count_source(q),
         )
 
+    async def top(self, q: ArticleQuery, limit: int) -> list[dict[str, Any]]:
+        """取前 ``limit`` 条（跨域归并用）。
+
+        与 :meth:`list` 的差别只有一处：**不分页**，由服务层把两个域各取
+        ``page * page_size`` 条后归并再切。SQL 仍然只走一次排序 + LIMIT。
+        """
+        stmt = self._base_select(q).order_by(
+            Article.published_at_cst.desc(), Article.id.desc()
+        ).limit(max(1, int(limit)))
+        rows = (await self.session.execute(stmt)).mappings().all()
+        return [dict(r) for r in rows]
+
     async def get(self, article_id: int) -> dict[str, Any] | None:
         """取单篇详情（含正文全文）。"""
         stmt = (
@@ -200,6 +216,14 @@ class ArticleRepository(BaseRepository):
     async def count(self, q: ArticleQuery) -> int:
         """仅统计条数。"""
         return int((await self.session.execute(self._count_select(q))).scalar() or 0)
+
+    async def total(self) -> int:
+        """全库条数（不看筛选条件，供 ``/channels`` 目录用）。"""
+        return int(
+            (await self.session.execute(select(func.count()).select_from(Article.__table__)))
+            .scalar()
+            or 0
+        )
 
     async def iter_export_rows(
         self, q: ArticleQuery, *, batch: int = 500, offset: int = 0

@@ -62,6 +62,14 @@ class SourceRepository(BaseRepository):
             .join(Province.__table__, Province.code == Source.province_code, isouter=True)
         )
 
+    async def total(self) -> int:
+        """全库来源数（供 ``/channels`` 目录用）。"""
+        return int(
+            (await self.session.execute(select(func.count()).select_from(Source.__table__)))
+            .scalar()
+            or 0
+        )
+
     async def list(
         self,
         *,
@@ -243,6 +251,7 @@ class ProvinceRepository(BaseRepository):
             select(
                 Province.code,
                 Province.name,
+                Province.short_name,
                 Province.region,
                 Province.is_special,
                 func.coalesce(src.c.source_count, 0).label("source_count"),

@@ -999,3 +999,22 @@ def test_summary_window_matches_articles_window():
         assert resolve_time_window(key) == resolve_time_window(key)
     with pytest.raises(Exception, match="二选一"):
         resolve_time_window("week", since="2026-10-01")
+
+
+# ======================================================================
+# 数据域（合并省级后端时新增）
+# ======================================================================
+def test_summary_rejects_province_channel():
+    """摘要链路只有电力库的窗口统计，省级域必须显式 400 而不是静默只摘要电力。"""
+    session = FakeSession([[_STATS_ROW], [{"days": 1}], [_DOC_ROW]])
+    resp = TestClient(build_app(session)).get("/api/v1/news/summary?channel=province")
+    assert resp.status_code == 400
+    assert resp.json()["code"] == 1000
+    assert "power" in resp.json()["message"]
+
+
+def test_summary_coerces_all_to_power_and_says_so():
+    """``all`` 收敛为 power，但必须在 scope.channel 里如实写明。"""
+    session = FakeSession([[_STATS_ROW], [{"days": 1}], [_DOC_ROW]])
+    data = TestClient(build_app(session)).get("/api/v1/news/summary?channel=all").json()["data"]
+    assert data["scope"]["channel"] == "power"

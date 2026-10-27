@@ -41,6 +41,7 @@ __all__ = [
     "get_platform_session",
     "get_collector_session",
     "get_collector_write_session",
+    "get_province_session",
     "dispose_database",
 ]
 
@@ -119,14 +120,20 @@ class CollectorBase(DeclarativeBase):
 
 
 class AsyncDatabase:
-    """两个异步引擎的生命周期容器。"""
+    """三个异步引擎的生命周期容器。
+
+    ``province`` 引擎是**可选**的：省级新闻库没接入时它根本不会被创建，
+    ``get_province_session`` 直接产出 ``None``，调用方据此降级。
+    """
 
     def __init__(self, settings: PlatformSettings | None = None) -> None:
         self.settings = settings or get_platform_settings()
         self._platform_engine: AsyncEngine | None = None
         self._collector_engine: AsyncEngine | None = None
+        self._province_engine: AsyncEngine | None = None
         self._platform_session: async_sessionmaker[AsyncSession] | None = None
         self._collector_session: async_sessionmaker[AsyncSession] | None = None
+        self._province_session: async_sessionmaker[AsyncSession] | None = None
 
     # ---------------- 引擎 ----------------
     def _engine_kwargs(self) -> dict[str, object]:
@@ -156,6 +163,23 @@ class AsyncDatabase:
             log.info("采集库引擎已创建（只读）")
         return self._collector_engine
 
+    @property
+    def province_configured(self) -> bool:
+        """省级库是否配置（不看连通性）。"""
+        return bool((self.settings.province_database_url or "").strip())
+
+    @property
+    def province_engine(self) -> AsyncEngine:
+        """省级库引擎。未配置时抛 :class:`RuntimeError`——调用方应先判 ``province_configured``。"""
+        if not self.province_configured:
+            raise RuntimeError("省级新闻库未配置（POWERNEWS_PLATFORM_PROVINCE_DATABASE_URL 为空）")
+        if self._province_engine is None:
+            self._province_engine = create_async_engine(
+                self.settings.province_database_url, **self._engine_kwargs()
+            )
+            log.info("省级新闻库引擎已创建（只读）")
+        return self._province_engine
+
     # ---------------- 会话 ----------------
     @property
     def platform_session(self) -> async_sessionmaker[AsyncSession]:
@@ -172,6 +196,14 @@ class AsyncDatabase:
                 self.collector_engine, expire_on_commit=False, class_=AsyncSession
             )
         return self._collector_session
+
+    @property
+    def province_session(self) -> async_sessionmaker[AsyncSession]:
+        if self._province_session is None:
+            self._province_session = async_sessionmaker(
+                self.province_engine, expire_on_commit=False, class_=AsyncSession
+            )
+        return self._province_session
 
     # ---------------- 健康检查 ----------------
     async def ping_platform(self) -> bool:
@@ -198,16 +230,32 @@ class AsyncDatabase:
             log.warning("采集库不可用: %s", exc)
             return False
 
+    async def ping_province(self) -> bool:
+        """省级库连通性。**未配置视为不可用**，不抛异常。"""
+        if not self.province_configured:
+            return False
+        try:
+            from sqlalchemy import text
+
+            async with self.province_engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+            return True
+        except Exception as exc:  # noqa: BLE001
+            log.warning("省级新闻库不可用: %s", exc)
+            return False
+
     # ---------------- 关闭 ----------------
     async def dispose(self) -> None:
         """释放全部连接池（应用 shutdown 调用）。"""
-        for engine in (self._platform_engine, self._collector_engine):
+        for engine in (self._platform_engine, self._collector_engine, self._province_engine):
             if engine is not None:
                 await engine.dispose()
         self._platform_engine = None
         self._collector_engine = None
+        self._province_engine = None
         self._platform_session = None
         self._collector_session = None
+        self._province_session = None
         log.info("数据库连接池已释放")
 
 
@@ -281,3 +329,21 @@ async def get_collector_write_session() -> AsyncIterator[AsyncSession]:
         except Exception:
             await session.rollback()
             raise
+
+
+async def get_province_session() -> AsyncIterator[AsyncSession | None]:
+    """省级新闻库会话依赖（只读，**可选**）。
+
+    未配置时产出 ``None``——路由据此把 ``channel=province`` 判成 503、
+    把 ``channel=all`` 降级为只查电力。
+
+    ⚠️ 这里**不能**抛异常。省级库是可选依赖，没接它的时候 ``/articles``
+    仍然要正常工作；抛异常会让「没配省级库」变成「整个文章接口 500」，
+    把一个可降级的能力做成了硬故障。
+    """
+    db = get_database()
+    if not db.province_configured:
+        yield None
+        return
+    async with db.province_session() as session:
+        yield session

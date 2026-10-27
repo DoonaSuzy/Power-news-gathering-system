@@ -11,6 +11,7 @@ from fastapi import APIRouter
 from newsplatform.api.v1 import (
     admin,
     articles,
+    channels,
     health,
     market,
     notices,
@@ -25,7 +26,17 @@ __all__ = ["api_router", "ROUTERS"]
 
 #: 供文档与测试遍历
 ROUTERS = (
-    health, articles, notices, summary, provinces, sources, stats, weather, market, admin,
+    health,
+    channels,
+    articles,
+    notices,
+    summary,
+    provinces,
+    sources,
+    stats,
+    weather,
+    market,
+    admin,
 )
 
 api_router = APIRouter()

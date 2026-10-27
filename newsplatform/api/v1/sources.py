@@ -33,16 +33,20 @@ from fastapi import APIRouter, Depends, Query, Request
 from newsplatform.api.v1._audit import audit_write
 from newsplatform.core.deps import (
     CATEGORY_CHOICES,
+    CHANNEL_DESC,
+    Channel,
     CollectorSessionDep,
     CollectorWriteSessionDep,
     PaginationDep,
     PlatformSessionDep,
+    ProvinceSessionDep,
     resolve_province_codes,
 )
 from newsplatform.core.ratelimit import enforce_rate_limit
 from newsplatform.core.response import ok
 from newsplatform.core.security import AuthContext, require_scope
 from newsplatform.models.schemas import SourceCreate, SourceUpdate
+from newsplatform.services.channel_service import ChannelService
 from newsplatform.services.source_service import SourceService
 
 __all__ = ["router"]
@@ -61,10 +65,12 @@ WriteDep = Depends(require_scope("sources:write"))
 WriteAuthDep = Depends(require_scope("sources:write"))
 
 
-@router.get("", summary="来源列表", dependencies=[ReadDep])
+@router.get("", summary="来源列表（power/province）", dependencies=[ReadDep])
 async def list_sources(
     session: CollectorSessionDep,
+    province_session: ProvinceSessionDep,
     pagination: PaginationDep,
+    channel: Annotated[Channel, Query(description=CHANNEL_DESC)] = "all",
     province: Annotated[
         str | None,
         Query(
@@ -102,12 +108,16 @@ async def list_sources(
     ``q`` / ``keyword`` 互为别名，避免「换个接口就得换参数名」这种隐形门槛。
     """
     province_codes = await resolve_province_codes(session, province)
-    page = await SourceService(session).list(
+    payload = await ChannelService(session, province_session).sources(
+        channel=channel,
         province_codes=tuple(province_codes) if province_codes else None,
-        category=category, enabled=enabled, keyword=q or keyword,
-        page=pagination.page, page_size=pagination.page_size,
+        category=category,
+        enabled=enabled,
+        keyword=q or keyword,
+        page=pagination.page,
+        page_size=pagination.page_size,
     )
-    return ok(page.model_dump(mode="json"))
+    return ok(payload)
 
 
 @router.post("", summary="新增来源", dependencies=[WriteDep])

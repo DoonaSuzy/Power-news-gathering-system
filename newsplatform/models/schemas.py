@@ -71,6 +71,9 @@ class PageMeta(BaseModel):
 
 class ArticlePage(PageMeta):
     items: list[ArticleListItem] = Field(default_factory=list)
+    #: 本次实际查询的数据域。``channel=all`` 但省级库未接入时会退化成
+    #: ``["power"]``——把这个事实告诉客户端，比让它自己猜「为什么少了一半」好。
+    channels: list[str] = Field(default_factory=lambda: ["power"])
 
 
 class SourcePage(PageMeta):
@@ -96,6 +99,7 @@ class ArticleListItem(_Base):
     time_precision: str = Field("unknown", description="second/minute/hour/day/unknown")
     url: str = ""
     quality_flags: str = Field("[]", description="质量标记 JSON 数组")
+    channel: str = Field("power", description="数据域：power / province")
 
 
 class ArticleImage(_Base):
@@ -142,6 +146,7 @@ class SourceItem(_Base):
     note: str = ""
     cooldown_until_utc: datetime | None = None
     last_discovery_success_at_utc: datetime | None = None
+    channel: str = Field("power", description="数据域：power / province")
 
 
 class SourceCreate(_Base):

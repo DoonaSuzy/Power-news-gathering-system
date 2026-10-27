@@ -27,18 +27,21 @@ from newsplatform.core.database import (
     get_collector_session,
     get_collector_write_session,
     get_platform_session,
+    get_province_session,
 )
 from newsplatform.core.exceptions import BadRequest
 from newsplatform.core.provinces import load_rows
 from newsplatform.core.provinces import resolve_code as _resolve_code
 from newsplatform.core.provinces import resolve_codes as _resolve_codes
 from newsplatform.repositories.articles import ArticleQuery
+from newsplatform.repositories.province_articles import PROVINCE_CATEGORY
 
 __all__ = [
     "SettingsDep",
     "PlatformSessionDep",
     "CollectorSessionDep",
     "CollectorWriteSessionDep",
+    "ProvinceSessionDep",
     "Pagination",
     "PaginationDep",
     "ArticleQueryDep",
@@ -46,6 +49,8 @@ __all__ = [
     "resolve_province_codes",
     "resolve_province_code",
     "CATEGORY_CHOICES",
+    "Channel",
+    "CHANNEL_DESC",
     "TimeRange",
     "TIME_RANGE_DESC",
 ]
@@ -55,6 +60,8 @@ PlatformSessionDep = Annotated[AsyncSession, Depends(get_platform_session)]
 CollectorSessionDep = Annotated[AsyncSession, Depends(get_collector_session)]
 #: 采集库**写**会话：仅用于 ``sources`` 配置列。用错会话会让写入被静默回滚。
 CollectorWriteSessionDep = Annotated[AsyncSession, Depends(get_collector_write_session)]
+#: 省级新闻库会话。**可为 None**：未接入省级域时路由据此降级。
+ProvinceSessionDep = Annotated[AsyncSession | None, Depends(get_province_session)]
 
 #: 来源类别。**直接取自种子清单的标签表**，不再抄一份字面量。
 #: 早先这里写死 ``("sgcc", "csg", "independent", "hmt", "industry")``，而
@@ -62,6 +69,16 @@ CollectorWriteSessionDep = Annotated[AsyncSession, Depends(get_collector_write_s
 #: ``category=gov`` 的文章在 ``/articles?category=gov`` 上直接 400——
 #: 一份合法取值抄了两处，加类别时必然漂移。
 CATEGORY_CHOICES = tuple(CATEGORY_LABELS)
+
+#: 数据域。``all`` 是默认值——对外只有一个入口，不传就看全部。
+Channel = Literal["power", "province", "all"]
+
+#: Swagger 里的渠道说明（文案只此一处，路由直接引用，避免两个接口各写一句）。
+CHANNEL_DESC = (
+    "数据域：power = 电力行业（60 源）；province = 省级官方新闻（34 源）；"
+    "all = 两者合并（默认）。省级域未接入时 all 自动降级为 power，"
+    "实际查询的域见响应里的 data.channels。"
+)
 
 #: 时间快捷档的取值集合。必须与 ``newsagg.timefilter.RANGE_KEYS`` 一致
 #: （``test_timefilter_presets.py`` 把两者钉在一起，改一处就会红）。
@@ -209,6 +226,7 @@ async def get_article_query(
     ] = None,
     body_only: Annotated[bool, Query(description="只返回正文非空的文章")] = False,
     exclude_duplicates: Annotated[bool, Query(description="排除转载标记的文章")] = False,
+    channel: Annotated[Channel, Query(description=CHANNEL_DESC)] = "all",
 ) -> ArticleQuery:
     """把 query string 翻译成 :class:`ArticleQuery`。
 
@@ -225,7 +243,10 @@ async def get_article_query(
     比「按 range 忽略自定义边界」或反之都更诚实。
     """
     if category and category not in CATEGORY_CHOICES:
-        raise BadRequest(f"category 取值必须是 {', '.join(CATEGORY_CHOICES)} 之一")
+        # 省级域没有 category 维度，但它对外统一输出 province_media。
+        # 允许按它筛（等价于 channel=province），否则客户端拿到这个值却筛不了。
+        if category != PROVINCE_CATEGORY:
+            raise BadRequest(f"category 取值必须是 {', '.join(CATEGORY_CHOICES)} 之一")
 
     date_from, date_to = resolve_time_window(range_key, since=since, until=until)
 
@@ -244,6 +265,7 @@ async def get_article_query(
         exclude_duplicates=exclude_duplicates,
         page=pagination.page,
         page_size=pagination.page_size,
+        channel=channel,
     )
 
 

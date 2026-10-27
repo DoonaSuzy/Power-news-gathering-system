@@ -70,6 +70,17 @@ async def health(response: Response) -> dict:
         detail="采集库（articles / sources）" if collector_ok else "不可用：文章与来源接口降级",
     ))
 
+    # 省级库是**可选**依赖：没配置就不出现在列表里，配了但连不上也不改变
+    # 整体状态——它只影响 channel=province，不该让整个服务被判为 degraded。
+    if db.province_configured:
+        province_ok = await db.ping_province()
+        dependencies.append(DependencyHealth(
+            name="province_db",
+            ok=province_ok,
+            detail="省级新闻库（newsagg_platform，可选域）" if province_ok
+            else "不可用：channel=province 将返回 503，channel=all 自动降级",
+        ))
+
     redis_ok = get_cache().ping()
     dependencies.append(DependencyHealth(
         name="redis", ok=redis_ok,
@@ -102,3 +113,33 @@ async def health(response: Response) -> dict:
         latest_article_at=latest,
     )
     return ok(payload.model_dump(mode="json"))
+
+
+@router.get(
+    "/health/ready",
+    summary="就绪探针",
+    response_model=None,
+    openapi_extra={"security": []},
+)
+async def readiness(response: Response) -> dict:
+    """就绪探针：只判「能不能对外提供文章查询」。
+
+    与 ``/health`` 的区别（合并省级后端时补上）：
+
+    - ``/health`` 给人看，列出全部依赖与最近文章时间，**总是 200**（除非平台库挂了）；
+    - ``/health/ready`` 给编排看，**只用状态码说话**：平台库 / 采集库 / Redis
+      任一不可用即 503。
+
+    省级库**不计入**就绪判定：它是可选域，挂了只影响 ``channel=province``，
+    因此不该让整个 Pod 被摘流量。
+    """
+    db = get_database()
+    checks = {
+        "platform_db": await db.ping_platform(),
+        "collector_db": await db.ping_collector(),
+        "redis": get_cache().ping(),
+    }
+    ready = all(checks.values())
+    if not ready:
+        response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
+    return ok({"ready": ready, "checks": checks})

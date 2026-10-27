@@ -184,8 +184,25 @@ def create_app(settings: PlatformSettings | None = None) -> FastAPI:
         title=cfg.app_name,
         version=cfg.app_version,
         description=(
-            "分布式电力新闻采集系统的数据中台：对外提供文章、来源、省份、"
-            "统计四类只读接口，以及来源配置与 API Key 两类写接口。"
+            "分布式新闻采集系统的数据中台：电力行业新闻（60 源）+ 省级官方新闻（34 源）"
+            "+ 行情与气象时序数据。\n\n"
+            "## 数据域（channel）\n\n"
+            "**省级新闻没有独立的接口路径**，它和电力新闻共用同一批端点，"
+            "用 `channel` 参数区分：\n\n"
+            "| channel | 数据源 | 内容 |\n"
+            "| --- | --- | --- |\n"
+            "| `power` | `powernews` 库 | 电网公司 / 能源主管部门 / 行业媒体，60 源 |\n"
+            "| `province` | `newsagg` 库 | 省级党报与广电官方新闻，34 源 |\n"
+            "| `all`（默认） | 两者合并 | 94 源 |\n\n"
+            "**支持 `channel` 的端点**：`/articles`（列表 / 计数 / 导出 / 详情）、"
+            "`/sources`（列表）、`/provinces`（字典 / 覆盖度 / 某省文章）、`/channels`。\n\n"
+            "**为什么不做成两套路径**：`/articles`、`/sources`、`/provinces`、`/health` "
+            "等 6 条路径在两套后端里同名，挂在一起会互相覆盖且不报错；"
+            "而且两个库的 id 各自自增，同名 id 不是同一条数据。\n\n"
+            "## 先看这个\n\n"
+            "`GET /api/v1/channels` 返回每个数据域的来源数、文章数与最新时间。"
+            "不传 `channel` 时默认 `all`；省级库未接入时自动降级为 `power`，"
+            "响应里的 `data.channels` 会如实标注本次实际查询了哪些域。"
         ),
         docs_url=cfg.docs_url,
         redoc_url=cfg.redoc_url,

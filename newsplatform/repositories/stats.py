@@ -130,8 +130,14 @@ class StatsRepository(BaseRepository):
         return result
 
     # ---------------- 按来源 ----------------
-    async def by_source(self, *, limit: int = 50) -> list[dict[str, Any]]:
-        """按来源统计产出与字段缺漏。"""
+    async def by_source(
+        self, *, limit: int = 50, province_codes: tuple[str, ...] | None = None
+    ) -> list[dict[str, Any]]:
+        """按来源统计产出与字段缺漏。
+
+        ``province_codes`` 用于「选中省份后只看该省站点」——不加这个过滤，
+        前端拿到的是全国 60 个源，没法按省展示。
+        """
         stmt = (
             select(
                 Source.id,
@@ -142,6 +148,7 @@ class StatsRepository(BaseRepository):
                 Source.priority,
                 Source.crawl_interval_hours,
                 Source.enabled,
+                Source.status,
                 func.count(Article.id).label("article_count"),
                 func.sum(case((Article.title == "", 1), else_=0)).label("empty_title"),
                 func.sum(
@@ -151,6 +158,10 @@ class StatsRepository(BaseRepository):
                 func.max(Article.published_at_cst).label("last_published_at"),
             )
             .select_from(Source.__table__.join(Article.__table__, Article.source_id == Source.id, isouter=True))
+            .where(
+                *([Source.province_code.in_(tuple(province_codes))]
+                  if province_codes else [])
+            )
             .group_by(Source.id)
             .order_by(func.count(Article.id).desc())
             .limit(limit)

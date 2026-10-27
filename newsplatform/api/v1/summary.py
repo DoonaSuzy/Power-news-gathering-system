@@ -41,6 +41,7 @@ from newsplatform.core.llm import LLMNotConfigured, LLMUnavailable
 from newsplatform.core.ratelimit import enforce_rate_limit
 from newsplatform.core.response import ok
 from newsplatform.core.security import require_scope
+from newsplatform.services.article_service import CHANNEL_POWER, CHANNEL_PROVINCE
 from newsplatform.services.news_search import asearch_electricity_news
 from newsplatform.services.summary_service import (
     DEFAULT_MAX_HIGHLIGHTS,
@@ -133,6 +134,10 @@ async def news_summary(
 
     ``method=llm`` 时若 LLM 未配置或调用失败，接口返回错误（400 / 502）而不是
     偷偷换成抽取式；``method=auto``（默认）才会降级，并把降级原因写进 ``caveats``。
+
+    ``channel`` 参数在此接口**只接受 power**：``all`` 会收敛为 power 并在
+    ``scope.channel`` 里写明，``province`` 直接 400。摘要依赖电力库独有的
+    窗口统计与分层抽样查询，省级域尚未实现等价能力。
     """
     # 默认档：三个时间参数都没给 → today；给了 since/until → custom
     effective_range = range_key
@@ -147,7 +152,18 @@ async def news_summary(
         until=until,
     )
 
-    scoped = replace(query, date_from=date_from, date_to=date_to)
+    # 摘要链路只覆盖 power 域：
+    # ``SummaryService`` 依赖 ``window_stats`` / ``latest_window_with_data`` /
+    # 按自然日分层抽样这三个电力库专属查询，省级库没有等价实现。
+    # 与其「总数含省级、要点只有电力」地自相矛盾，不如把边界说清楚。
+    if query.channel == CHANNEL_PROVINCE:
+        raise BadRequest(
+            "新闻智能总结暂只覆盖 channel=power；省级数据域尚未接入摘要"
+        )
+
+    scoped = replace(
+        query, date_from=date_from, date_to=date_to, channel=CHANNEL_POWER
+    )
     service = SummaryService(session)
     try:
         data = await service.news_summary(
@@ -168,6 +184,9 @@ async def news_summary(
     finally:
         await service.aclose()
 
+    # 把「实际只摘要了 power 域」写进响应，避免调用方以为 all 真的含省级
+    if isinstance(data, dict) and isinstance(data.get("scope"), dict):
+        data["scope"]["channel"] = CHANNEL_POWER
     return ok(data)
 
 

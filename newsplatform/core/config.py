@@ -84,6 +84,10 @@ class PlatformSettings(BaseSettings):
         "mysql+aiomysql://powernews:CHANGE_ME@127.0.0.1:3306"
         "/powernews?charset=utf8mb4"
     )
+    #: 省级新闻库（只读语义，**可选**）：newsagg_platform 的 articles / sources。
+    #: 留空表示未接入省级数据域——此时 ``channel=province`` 返回 503，
+    #: ``channel=all`` 自动降级为只查电力，不会让整个接口挂掉。
+    province_database_url: str = ""
     db_echo: bool = False
     db_pool_size: int = 10
     db_max_overflow: int = 20
@@ -155,9 +159,17 @@ class PlatformSettings(BaseSettings):
         )
 
     @property
+    def province_ready(self) -> bool:
+        """省级数据域是否接入。
+
+        判据只有一条：连接串非空。**不在这里探活**——探活是健康检查的事，
+        把网络请求塞进配置属性会让「取配置」变成可能失败的操作。
+        """
+        return bool(self.province_database_url.strip())
+
+    @property
     def docs_url(self) -> str | None:
         return "/docs" if self.docs_enabled else None
-
     @property
     def redoc_url(self) -> str | None:
         return "/redoc" if self.docs_enabled else None
@@ -175,6 +187,7 @@ class PlatformSettings(BaseSettings):
             "docs": self.docs_enabled,
             "platform_db": _mask_dsn(self.database_url),
             "collector_db": _mask_dsn(self.collector_database_url),
+            "province_db": _mask_dsn(self.province_database_url) if self.province_ready else "",
             "redis": self.redis_url,
             "rate_limit_per_minute": self.rate_limit_per_minute,
             "page_size": f"{self.default_page_size}-{self.max_page_size}",

@@ -20,10 +20,18 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query, Request
 
 from newsplatform.api.v1._audit import audit_write
-from newsplatform.core.deps import CollectorSessionDep, PlatformSessionDep
+from newsplatform.core.deps import (
+    CHANNEL_DESC,
+    Channel,
+    CollectorSessionDep,
+    PlatformSessionDep,
+    ProvinceSessionDep,
+    resolve_province_codes,
+)
 from newsplatform.core.ratelimit import enforce_rate_limit
 from newsplatform.core.response import ok
 from newsplatform.core.security import AuthContext, require_scope
+from newsplatform.services.channel_service import ChannelService
 from newsplatform.services.stats_service import StatsService
 
 __all__ = ["router"]
@@ -59,14 +67,29 @@ async def stats_by_province(session: CollectorSessionDep) -> dict:
     return ok({"items": rows, "total": len(rows)})
 
 
-@router.get("/sources", summary="按来源统计")
+@router.get("/sources", summary="按来源统计（power/province）")
 async def stats_by_source(
     session: CollectorSessionDep,
+    province_session: ProvinceSessionDep,
     limit: Annotated[int, Query(ge=1, le=200, description="返回条数上限")] = 50,
+    channel: Annotated[Channel, Query(description=CHANNEL_DESC)] = "all",
+    province: Annotated[
+        str | None,
+        Query(description="省份：代码 / 全称 / 简称 / 大区名；用于只看该省站点"),
+    ] = None,
 ) -> dict:
-    """来源维度产出与字段缺漏（默认取产出最多的前 50 个）。"""
-    rows = await StatsService(session).by_source(limit=limit)
-    return ok({"items": [r.model_dump(mode="json") for r in rows], "total": len(rows)})
+    """来源维度产出与字段缺漏，按文章数倒序。
+
+    ``province`` 是「选中省份后列出该省站点」的入口——前端站点概览表依赖它，
+    没有这个过滤只能拿到全国站点。
+    """
+    province_codes = await resolve_province_codes(session, province)
+    rows = await ChannelService(session, province_session).source_stats(
+        channel=channel,
+        province_codes=tuple(province_codes) if province_codes else None,
+        limit=limit,
+    )
+    return ok({"items": rows, "total": len(rows), "channel": channel})
 
 
 @router.get("/jobs", summary="任务健康度")

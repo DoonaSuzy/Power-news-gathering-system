@@ -43,7 +43,10 @@ services:
     restart: unless-stopped
     environment:
       MYSQL_ROOT_PASSWORD: ${POWERNEWS_MYSQL_ROOT_PASSWORD:-root_dev_pwd}
-      MYSQL_DATABASE: ${POWERNEWS_MYSQL_DATABASE:-power_news}
+      # 默认值必须与 .env / 代码里的库名一致（powernews）。
+      # 早先写成 power_news（下划线），一旦忘配 POWERNEWS_MYSQL_DATABASE
+      # 就会建出一个空壳库，采集却写进 powernews —— 这类「同名不同库」最难排查。
+      MYSQL_DATABASE: ${POWERNEWS_MYSQL_DATABASE:-powernews}
       MYSQL_USER: ${POWERNEWS_MYSQL_USER:-newsagg}
       MYSQL_PASSWORD: ${POWERNEWS_MYSQL_PASSWORD:-newsagg_dev_pwd}
       TZ: Asia/Shanghai
