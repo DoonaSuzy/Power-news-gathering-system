@@ -182,6 +182,32 @@ def main() -> int:
                     print("  ⚠ 84 上没有 .env —— 需手工从 .env.example 创建并填密钥：")
                     print(f"     ssh zhu@192.168.101.84 'cd \"{REMOTE_DIR}\" && cp .env.example .env && vi .env'")
 
+            # ---------------- ⑥.5 上传前端产物 ----------------
+            # `web/dist` 不入版本库（构建产物），compose 用 volume 挂载它。
+            # 只传 git 归档的话，84 上留着的还是上一次的旧 dist ——
+            # 实测就是这样：后端 42 个端点都上了，首页 JS 哈希却没变。
+            print("\n⑥.5 上传前端产物 web/dist")
+            dist = PROJECT_ROOT / "web" / "dist"
+            if not (dist / "index.html").is_file():
+                print("  ⚠ 本地没有 web/dist（先 cd web && npm run build），跳过")
+            else:
+                web_tar = Path(td) / "web-dist.tar.gz"
+                with tarfile.open(web_tar, "w:gz") as tf:
+                    tf.add(dist, arcname="dist")
+                sftp = client.open_sftp()
+                sftp.put(str(web_tar), "/tmp/web-dist.tar.gz")
+                sftp.close()
+                run(f"rm -rf '{REMOTE_DIR}/web/dist' && mkdir -p '{REMOTE_DIR}/web'")
+                code, out, err = run(
+                    f"tar -xzf /tmp/web-dist.tar.gz -C '{REMOTE_DIR}/web' "
+                    f"&& rm -f /tmp/web-dist.tar.gz && echo OK"
+                )
+                if "OK" in out:
+                    print(f"  ✓ 已更新（{web_tar.stat().st_size // 1024} KB）")
+                else:
+                    print(f"  ✗ 上传失败：{err[:200]}")
+                    return 1
+
             # ---------------- ⑦ 重建镜像 ----------------
             print("\n⑦ 重建镜像（docker compose build）")
             # 不能写成 `... build 2>&1 | tail -5`：管道让 exit code 变成 tail 的（恒 0），
