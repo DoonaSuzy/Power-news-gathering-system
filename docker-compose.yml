@@ -20,6 +20,28 @@ x-app-build: &app-build
 
 x-app-image: &app-image power-news/app:local
 
+# 容器日志轮转
+# ------------
+# 三个约定：
+# 1) 用 json-file 而**不是** driver: none —— 所有排障口径都是
+#    `docker logs --since 1h`，禁掉日志等于把排障手段删了。
+#    轮转只是切文件，`docker logs` 照常可用。
+# 2) 写日志最多的四个（API + 调度 + worker + 回填）给到 20m×5=100MB，
+#    其余 10m×3=30MB。全栈天花板约 640MB，VM 可用 34G，安全。
+# 3) 不开 compress：老 daemon 不认这个 option 会让容器起不来，
+#    省那点磁盘不值得拿启动失败换。
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-app-logging: &app-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
 x-app-env: &app-env
   POWERNEWS_MYSQL_HOST: mysql
   POWERNEWS_MYSQL_PORT: "3306"
@@ -74,6 +96,7 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+    logging: *default-logging
     networks: [power-net]
 
   redis:
@@ -88,6 +111,7 @@ services:
       interval: 10s
       timeout: 3s
       retries: 10
+    logging: *default-logging
     networks: [power-net]
 
   fastapi:
@@ -117,6 +141,7 @@ services:
       # ⚠️ `web/dist` 是构建产物、**不入版本库**，部署时需单独传输
       #   （`git archive` 打不出来，见 scripts/deploy_84_transfer.py 的说明）。
       - ./web/dist:/app/web/dist:ro
+    logging: *app-logging
     networks: [power-net]
 
   scheduler:
@@ -141,6 +166,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    logging: *app-logging
     networks: [power-net]
 
   worker:
@@ -163,6 +189,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    logging: *app-logging
     networks: [power-net]
     # 水平扩展采集能力：docker compose up -d --scale worker=3
     # （scale 时须去掉 container_name，并用 supervisor 而非裸 worker）
@@ -202,6 +229,7 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    logging: *app-logging
     networks: [power-net]
 
   # ---- 监控栈：默认不启动，--profile ops 才拉起（内存紧张）----
@@ -211,16 +239,24 @@ services:
     restart: unless-stopped
     profiles: ["ops"]
     volumes:
-      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ./deploy/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      # 目录挂载而不是两个单文件：tar 解压是 unlink+create，容器会一直指向旧
+      # inode，改了规则却「看起来没生效」（之前靠 --force-recreate 绕）。
+      # 目录挂载后 inode 不变，配合 --web.enable-lifecycle 可直接热加载。
+      - ./deploy/prometheus:/etc/prometheus:ro
       - prometheus_data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
+      # 默认只留 15 天且无上限：564 条序列 × 15s，磁盘是 40G 的 VM
+      - "--storage.tsdb.retention.time=30d"
+      - "--storage.tsdb.retention.size=2GB"
+      # 让 `POST /-/reload` 可用（部署脚本 ⑧.5 依赖它）
+      - "--web.enable-lifecycle"
     ports:
       - "${PROMETHEUS_PORT:-9090}:9090"
     depends_on:
       - fastapi
+    logging: *default-logging
     networks: [power-net]
 
   grafana:
@@ -244,6 +280,7 @@ services:
       - "${GRAFANA_PORT:-3000}:3000"
     depends_on:
       - prometheus
+    logging: *default-logging
     networks: [power-net]
 
   # ------------------------------------------------------------------
@@ -294,6 +331,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
+    logging: *default-logging
     networks: [power-net]
 
   # ------------------------------------------------------------------
@@ -351,6 +389,7 @@ services:
       - --host=0.0.0.0
     ports:
       - "${BROWSER_PORT:-3010}:3000"
+    logging: *default-logging
     networks: [power-net]
     healthcheck:
       # run-server 无 /health，TCP 探活足够判断进程活着
