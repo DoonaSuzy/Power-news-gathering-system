@@ -237,6 +237,22 @@ def main() -> int:
                 print(f"✗ 启动失败：{err[:400]}")
                 return 1
 
+            # ---------------- ⑧.5 让 Prometheus 重新加载规则 ----------------
+            # alerts.yml / prometheus.yml 是**文件级** bind mount：tar 解压会替换
+            # inode，而容器仍指向旧文件。实测 `docker kill -s HUP` 与 `/-/reload`
+            # 都无效（容器里 grep 不到新规则），必须重建容器才能挂到新文件。
+            if (PROJECT_ROOT / "deploy" / "prometheus" / "alerts.yml").is_file():
+                print("\n⑧.5 重建 Prometheus（让新规则生效）")
+                code, out, err = run(
+                    f"cd '{REMOTE_DIR}' && docker compose --env-file .env --profile ops "
+                    f"up -d --force-recreate prometheus 2>&1",
+                    timeout=180,
+                )
+                if code == 0:
+                    print("  ✓ 已重建（规则随容器重新加载）")
+                else:
+                    print(f"  ⚠ 重建失败（不影响业务）：{err[:200]}")
+
             # ---------------- ⑨ 验证 ----------------
             print("\n⑨ 部署后验证")
             for label, c in [
