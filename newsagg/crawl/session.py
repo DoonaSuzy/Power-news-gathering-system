@@ -17,6 +17,7 @@ from typing import Any
 
 from newsagg.cleaning import now_utc_naive
 from newsagg.config import get_settings
+from newsagg.crawl.netpolicy import BLOCK_KINDS
 from newsagg.db import Database
 from newsagg.logutil import get_logger
 from newsagg.repo import Repository
@@ -56,6 +57,9 @@ class CrawlSession:
     ) -> None:
         self.job_id = job_id
         self.source_id = source_id
+        #: 本次任务遇到的阻断种类（river_security / path_or_waf / rate_limit …）。
+        #: 只记种类不记次数：判定「要不要重试」看的是种类，不是撞了几次。
+        self.block_kinds: set[str] = set()
         self.adapter_name = adapter_name
         self.window = window
         self.lease_token = lease_token
@@ -137,9 +141,11 @@ class CrawlSession:
         log.info("job %s 停止翻页: %s（已发出的详情请求继续处理）", self.job_id, reason)
 
     def note_block(self, status: int) -> None:
-        """记录一次被封。"""
+        """记录一次被封，并记下阻断种类。"""
         if status in BLOCK_HTTP_CODES:
             self.blocked += 1
+            kind, _retryable = BLOCK_KINDS.get(status, ("unknown", True))
+            self.block_kinds.add(kind)
             if self.blocked >= 5:
                 self.request_stop(f"blocked_http_{status}")
 
@@ -159,6 +165,10 @@ class CrawlSession:
         导致**站点没更新也被判成异常**，45 个来源里 39 个卡在 ``retry_wait``、
         调度器反复重试。所以「列表页是否真空」只能看 ``listed``。
         """
+        # 瑞数（412）这类**挑战型**阻断：重试拿到的还是同一张挑战页，
+        # 白白多打几次只会加重风控。直接判失败，由调用方给来源设冷却。
+        if "river_security" in self.block_kinds:
+            return "failed", 0
         if self.blocked >= 5:
             return "retry_wait", 60
         if self.stop_reason in ("request_budget", "failure_ratio"):

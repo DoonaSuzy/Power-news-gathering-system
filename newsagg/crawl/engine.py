@@ -18,6 +18,9 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
+from newsagg.cleaning import now_utc_naive
 from newsagg.config import get_settings
 from newsagg.crawl.session import CrawlSession
 from newsagg.crawl.settings import scrapy_settings
@@ -204,6 +207,12 @@ def conclude(session: CrawlSession) -> dict:
     else:
         session.finish(status)
 
+    # 挑战型阻断（瑞数 412）给来源设 6 小时冷却：
+    # 重试拿到的还是同一张挑战页，继续打只会加重风控。
+    # 冷却期内调度器会跳过该来源（schedule.py 读 cooldown_until_utc）。
+    if status == "failed" and "river_security" in session.block_kinds:
+        _cool_down(session, hours=6)
+
     stats = {
         "job_id": session.job_id,
         "status": status,
@@ -240,3 +249,16 @@ def conclude(session: CrawlSession) -> dict:
         )
 
     return stats
+
+
+def _cool_down(session: CrawlSession, *, hours: int) -> None:
+    """把来源置为冷却 ``hours`` 小时（失败不影响主流程）。"""
+    try:
+        until = now_utc_naive() + timedelta(hours=hours)
+        with session.db.connect() as conn:
+            session.repo.set_cooldown(conn, session.source_id, until)
+        log.warning(
+            "来源 %s 遭挑战型阻断，冷却至 %s", session.adapter_name or session.source_id, until
+        )
+    except Exception as exc:  # noqa: BLE001 - 冷却失败不该让任务收尾崩掉
+        log.warning("设置冷却失败：%s", exc)
