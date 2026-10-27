@@ -105,3 +105,38 @@ def test_ready_job_runs():
     delivery = _call(job_status="queued")
     assert delivery.action == RUN
     assert delivery.reason == "ready"
+
+
+# ----------------------------------------------------------------------
+# 3. 重试到期（retry_at_utc 真正生效）
+# ----------------------------------------------------------------------
+def test_retry_wait_before_due_waits():
+    """退避未到：不能跑，且要告诉调用方还剩多少秒。"""
+    delivery = _call(
+        job_status="retry_wait",
+        retry_at_utc=_NOW + timedelta(minutes=30),
+    )
+    assert delivery.action == WAIT
+    assert delivery.reason == "retry_not_due"
+    assert delivery.retry_in_seconds == pytest.approx(1800, abs=1)
+
+
+def test_retry_wait_due_runs():
+    delivery = _call(
+        job_status="retry_wait",
+        retry_at_utc=_NOW - timedelta(minutes=1),
+    )
+    assert delivery.action == RUN
+    assert delivery.reason == "retry_due"
+
+
+def test_retry_wait_exactly_due_runs():
+    """到点即放行——比较符号写成 ``<`` 就会多等一轮。"""
+    assert _call(job_status="retry_wait", retry_at_utc=_NOW).action == RUN
+
+
+def test_retry_wait_without_deadline_runs():
+    """历史脏数据（列为 NULL）按到期处理，不能永久卡住。"""
+    delivery = _call(job_status="retry_wait", retry_at_utc=None)
+    assert delivery.action == RUN
+    assert delivery.reason == "retry_due"

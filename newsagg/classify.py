@@ -32,6 +32,8 @@ class Delivery:
     action: str
     reason: str
     job_id: int
+    #: ``retry_not_due`` 时距到点还有多少秒（供 worker 决定等多久再重投）。
+    retry_in_seconds: float | None = None
 
     @property
     def should_run(self) -> bool:
@@ -47,6 +49,7 @@ def classify_delivery(
     lease_until_utc: datetime | None,
     now_utc: datetime,
     owner: str,
+    retry_at_utc: datetime | None = None,
 ) -> Delivery:
     """判定一条队列消息该如何处置。
 
@@ -56,6 +59,7 @@ def classify_delivery(
     :param lease_until_utc: 租约到期时间
     :param now_utc: 当前 UTC 时间
     :param owner: 本 worker 身份
+    :param retry_at_utc: 退避到点时间；``None`` 视为已到期（兼容历史脏数据）
     """
     if not job_exists:
         return Delivery(ACK, "job_missing", job_id)
@@ -64,8 +68,16 @@ def classify_delivery(
         return Delivery(ACK, f"terminal:{job_status}", job_id)
 
     if job_status == "retry_wait":
-        # 未到重试时刻则等待，否则放行
-        return Delivery(RUN, "retry_due", job_id)
+        # 退避是**写进库里的**（set_retry 记 30/60/120 分钟）。只看状态不看时间，
+        # 等于把退避配置作废——实际节奏会退化成 PEL 的 10 分钟认领间隔。
+        if retry_at_utc is None or retry_at_utc <= now_utc:
+            return Delivery(RUN, "retry_due", job_id)
+        return Delivery(
+            WAIT,
+            "retry_not_due",
+            job_id,
+            retry_in_seconds=(retry_at_utc - now_utc).total_seconds(),
+        )
 
     holding = bool(lease_owner) and lease_owner != owner
     expired = lease_until_utc is not None and lease_until_utc <= now_utc

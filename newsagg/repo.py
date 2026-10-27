@@ -58,6 +58,9 @@ class JobRow:
     lease_token: str | None = None
     lease_owner: str | None = None
     lease_until_utc: datetime | None = None
+    #: 退避到点时间（``retry_wait`` 才有意义）。不读它的话，``set_retry()``
+    #: 写进去的 30/60/120 分钟完全不起作用，实际节奏退化成 PEL 的 10 分钟。
+    retry_at_utc: datetime | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -363,6 +366,7 @@ class Repository:
             lease_token=row.get("lease_token"),
             lease_owner=row.get("lease_owner"),
             lease_until_utc=row.get("lease_until_utc"),
+            retry_at_utc=row.get("retry_at_utc"),
         )
 
     def find_open_job(self, conn, job_id: int) -> JobRow | None:
@@ -370,7 +374,7 @@ class Repository:
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT j.id, j.source_id, j.job_type, j.status, "
-                "j.window_start_cst, j.window_end_cst, "
+                "j.window_start_cst, j.window_end_cst, j.retry_at_utc, "
                 "s.lease_token, s.lease_owner, s.lease_until_utc "
                 "FROM crawl_jobs j JOIN sources s ON s.id=j.source_id "
                 "WHERE j.id=%s",

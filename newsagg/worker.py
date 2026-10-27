@@ -87,6 +87,7 @@ def take_assignment(queue: StreamQueue, db: Database, owner: str) -> bool:
         lease_until_utc=job.lease_until_utc if job else None,
         now_utc=_utc_now(),
         owner=owner,
+        retry_at_utc=job.retry_at_utc if job else None,
     )
 
     if delivery.action == ACK:
@@ -96,7 +97,17 @@ def take_assignment(queue: StreamQueue, db: Database, owner: str) -> bool:
 
     if delivery.action == WAIT:
         log.info("job %s 稍后重试：%s", job_id, delivery.reason)
-        # 重新投递一条新消息，延后处理；原消息确认掉避免堆积
+        if delivery.reason == "retry_not_due":
+            # 退避未到点。**不能**走下面那条 publish+ack：
+            # 那样每 5 秒重投一次、空转到点为止，而且新消息的 times_delivered
+            # 从 1 重新计数，等于把「等待」也当成「一次失败尝试」。
+            # 这里先 ack（把消息从 PEL 摘掉，sleep 期间不会被 XAUTOCLAIM 抢走），
+            # 等到点再投一条新的。
+            queue.ack(message_id)
+            time.sleep(min(max(delivery.retry_in_seconds or 0, 1), _WAIT_RESUBMIT_SECONDS))
+            queue.publish([job_id])
+            return True
+        # 租约被他人持有：重新投递一条新消息，延后处理；原消息确认掉避免堆积
         queue.publish([job_id])
         queue.ack(message_id)
         time.sleep(min(_WAIT_RESUBMIT_SECONDS, 5))
