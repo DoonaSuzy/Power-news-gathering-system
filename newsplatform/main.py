@@ -112,6 +112,23 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         log.info("应用已关闭")
 
 
+#: 这些路径**不走 SPA 回退**：不存在的接口必须返回 404，而不是 index.html。
+#:
+#: 实测事故：生产上 `GET /api/v1/channels`（当时还没这个端点）返回的是
+#: `200 text/html` + 前端首页，巡检脚本据此判定「端点存在」。
+#: 前端调错接口时也只会拿到一坨 HTML，JSON 解析失败却看不出是 404。
+_SPA_RESERVED_PREFIXES = ("api", "metrics", "docs", "redoc", "openapi.json")
+
+
+def _is_reserved_path(path: str) -> bool:
+    """``path`` 是否属于「必须返回真实状态码」的后端路径。"""
+    clean = path.strip("/")
+    for prefix in _SPA_RESERVED_PREFIXES:
+        if clean == prefix or clean.startswith(prefix + "/"):
+            return True
+    return False
+
+
 class _SPAStaticFiles(StaticFiles):
     """支持 SPA 路由回退的静态文件服务。
 
@@ -141,7 +158,7 @@ class _SPAStaticFiles(StaticFiles):
         try:
             return await super().get_response(path, scope)
         except StarletteHTTPException as exc:
-            if exc.status_code == 404:
+            if exc.status_code == 404 and not _is_reserved_path(path):
                 return await super().get_response("index.html", scope)
             raise
 
