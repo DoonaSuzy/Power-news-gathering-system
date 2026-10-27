@@ -1,0 +1,44 @@
+# Alertmanager 配置 —— 当前只「接收、去重、分组、留痕」，不发送任何通知。
+#
+# 为什么先用空接收器
+# ------------------
+# 没有 Alertmanager 时，Prometheus 的 9 条规则只会停在 firing 状态，没人知道；
+# 但直接配一个 webhook 又得先有渠道（企业微信/飞书/SMTP），而渠道还没定。
+# 于是先让告警**有一个正式的去处**：实例能在 9093 上看、能被静默、能按
+# alertname+channel 聚合，渠道定了只改 receivers 一段，其余不动。
+#
+# `receivers: [{name: silent}]` 只有 name、没有任何 integration，是合法的
+# blackhole 写法（Alertmanager 只校验 name 非空唯一且被 route 引用）。
+# 写成 `receivers: []` 会启动失败——root route 指向的 receiver 不存在。
+#
+# 渠道接进来时（例：企业微信机器人），只需追加：
+#
+#   receivers:
+#     - name: silent
+#     - name: wecom
+#       webhook_configs:
+#         - url: https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=<KEY>
+#           send_resolved: true
+#
+#   然后把 route.receiver 改成 wecom，并在 routes 里按 severity 分流。
+
+global:
+  resolve_timeout: 5m
+  external_labels:
+    monitor: power-news
+    env: production
+
+route:
+  receiver: silent
+  # 按「告警名 + 数据域」聚合：
+  # - 不按 source：94 个源各自成组会产生 94 条，比现在还吵；
+  # - 不按 team / severity：会把 CollectorLagHigh（全链路停摆）和站点级告警
+  #   混成一条，真正的故障反而被淹没。
+  # 这是**聚合**不是**抑制**——实例在 9093 上仍然逐条可见，不丢信息。
+  group_by: [alertname, channel]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+
+receivers:
+  - name: silent

@@ -237,21 +237,42 @@ def main() -> int:
                 print(f"✗ 启动失败：{err[:400]}")
                 return 1
 
-            # ---------------- ⑧.5 让 Prometheus 重新加载规则 ----------------
-            # alerts.yml / prometheus.yml 是**文件级** bind mount：tar 解压会替换
-            # inode，而容器仍指向旧文件。实测 `docker kill -s HUP` 与 `/-/reload`
-            # 都无效（容器里 grep 不到新规则），必须重建容器才能挂到新文件。
-            if (PROJECT_ROOT / "deploy" / "prometheus" / "alerts.yml").is_file():
-                print("\n⑧.5 重建 Prometheus（让新规则生效）")
-                code, out, err = run(
-                    f"cd '{REMOTE_DIR}' && docker compose --env-file .env --profile ops "
-                    f"up -d --force-recreate prometheus 2>&1",
-                    timeout=180,
+            # ---------------- ⑧.5 让 Prometheus / Alertmanager 加载新配置 ----------------
+            # 配置已改成**目录挂载** + Prometheus 开了 --web.enable-lifecycle，
+            # 正常情况下热加载即可，不必重建容器。
+            #
+            # 历史教训：单文件 bind mount 时 tar 解压会换 inode，容器仍指向旧文件，
+            # `kill -HUP` 与 `/-/reload` 都无效（容器里 grep 不到新规则），只能
+            # --force-recreate。这里保留重建作为兜底，但先试热加载。
+            #
+            # 只在显式传 --ops 时做：原实现判断 `alerts.yml` 是否存在（恒真），
+            # 于是**不带 --ops 也会把监控栈拉起来**，属于误伤。
+            if args.ops:
+                print("\n⑧.5 热加载 Prometheus 配置")
+                code, _out, err = run(
+                    "curl -fsS -X POST http://127.0.0.1:9090/-/reload", timeout=60
                 )
                 if code == 0:
-                    print("  ✓ 已重建（规则随容器重新加载）")
+                    print("  ✓ 已热加载")
                 else:
-                    print(f"  ⚠ 重建失败（不影响业务）：{err[:200]}")
+                    print("  ⚠ 热加载失败，回退为重建容器")
+                    code, _out, err = run(
+                        f"cd '{REMOTE_DIR}' && docker compose --env-file .env --profile ops "
+                        f"up -d --force-recreate prometheus 2>&1",
+                        timeout=180,
+                    )
+                    print("  ✓ 已重建" if code == 0 else f"  ⚠ 重建失败（不影响业务）：{err[:200]}")
+
+                # Alertmanager 同样是目录挂载；它没有热加载接口，配置变了就重建。
+                run(
+                    f"cd '{REMOTE_DIR}' && docker compose --env-file .env --profile ops "
+                    f"up -d alertmanager 2>&1",
+                    timeout=180,
+                )
+                code2, _o, _e = run(
+                    "curl -fsS --max-time 5 http://127.0.0.1:9093/-/ready", timeout=30
+                )
+                print("  ✓ Alertmanager 就绪" if code2 == 0 else "  ⚠ Alertmanager 未就绪（不影响采集）")
 
             # ---------------- ⑨ 验证 ----------------
             print("\n⑨ 部署后验证")

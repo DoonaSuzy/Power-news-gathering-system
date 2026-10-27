@@ -9,9 +9,17 @@ global:
     monitor: power-news
     env: production
 
-# 告警规则文件（PowerSpiderDown / HighErrorRate / QueueBacklog / HighLatency）。
+# 告警规则文件（PowerSpiderDown / HighErrorRate / QueueBacklog / HighLatency 等 9 条）。
 rule_files:
   - /etc/prometheus/alerts.yml
+
+# 告警的去处：规则只在 Prometheus 里判，谁被通知/静默/聚合由 Alertmanager 决定。
+# 没有这一段时，规则会停在 firing 状态，UI 上能看见，但没有人会收到任何东西。
+alerting:
+  alertmanagers:
+    - api_version: v2
+      static_configs:
+        - targets: ["alertmanager:9093"]
 
 scrape_configs:
   # FastAPI 数据中台：业务请求计数 / 延迟 / 采集等核心指标。

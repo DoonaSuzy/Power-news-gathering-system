@@ -259,6 +259,25 @@ services:
     logging: *default-logging
     networks: [power-net]
 
+  # 告警的「去处」：规则在 Prometheus 里判，能否被看见/静默/聚合在 Alertmanager。
+  # 当前 receiver 是 silent（不发送），渠道定了只改 alertmanager.yml 的 receivers。
+  alertmanager:
+    image: prom/alertmanager:v0.28.1
+    container_name: power-alertmanager
+    restart: unless-stopped
+    profiles: ["ops"]
+    volumes:
+      # 目录挂载：单文件挂载在 tar 解压换 inode 后，容器读的还是旧配置
+      - ./deploy/alertmanager:/etc/alertmanager:ro
+      - alertmanager_data:/alertmanager
+    command:
+      - "--config.file=/etc/alertmanager/alertmanager.yml"
+      - "--storage.path=/alertmanager"
+    ports:
+      - "${ALERTMANAGER_PORT:-9093}:9093"
+    logging: *default-logging
+    networks: [power-net]
+
   grafana:
     image: grafana/grafana:latest
     container_name: power-grafana
@@ -405,6 +424,8 @@ volumes:
   prometheus_data:
   grafana_data:
   rustfs_data:
+  # 静默（silences）与通知日志（nflog）落在这里，重启不丢
+  alertmanager_data:
 
 networks:
   power-net:
