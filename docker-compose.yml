@@ -124,10 +124,13 @@ services:
       mysql:
         condition: service_healthy
     environment:
-      # 只用于生成临时 .my.cnf；脚本里 unset 掉，避免在容器环境里长期可见
-      MYSQL_PWD: ${POWERNEWS_MYSQL_ROOT_PASSWORD:-root_dev_pwd}
+      # 用应用账号而不是 root：它在三个业务库上有 ALL、SUPER 一律没有，
+      # 既够 mysqldump 用，又不必把 root 口令再复制一份到 .env。
+      # 生产 .env 里没配这两项时回落到 root + compose 默认口令（可能连不上，
+      # 所以部署时要把 POWERNEWS_BACKUP_USER/PASSWORD 写进 .env）。
       BACKUP_HOST: mysql
-      BACKUP_USER: root
+      BACKUP_USER: ${POWERNEWS_BACKUP_USER:-root}
+      BACKUP_PASSWORD: ${POWERNEWS_BACKUP_PASSWORD:-root_dev_pwd}
       # 留空=自动枚举（排除系统库）。务必保持留空：同实例还有省级库 newsagg
       BACKUP_DATABASES: ${POWERNEWS_BACKUP_DATABASES:-}
       BACKUP_AT: ${POWERNEWS_BACKUP_AT:-03:30}

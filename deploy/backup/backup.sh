@@ -42,9 +42,9 @@ USER_="${BACKUP_USER:-root}"
 
 # 口令走配置文件而不是命令行：`mysqldump -p<pass>` 会出现在进程列表里
 CNF=/tmp/.backup.cnf
-printf '[client]\nhost=%s\nuser=%s\npassword=%s\n' "$HOST" "$USER_" "${MYSQL_PWD:-}" > "$CNF"
+printf '[client]\nhost=%s\nuser=%s\npassword=%s\n' "$HOST" "$USER_" "${BACKUP_PASSWORD:-}" > "$CNF"
 chmod 600 "$CNF"
-unset MYSQL_PWD
+unset BACKUP_PASSWORD
 
 log() { echo "[backup] $(date '+%F %T') $*"; }
 
